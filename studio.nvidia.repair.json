@@ -1,0 +1,30 @@
+{
+  "providers": [
+    {
+      "name": "nvidia-nemotron-repairer",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "roles": [],
+      "temperature": 0.55,
+      "top_p": 0.9,
+      "max_tokens": 8192,
+      "timeout": 300,
+      "retries": 0,
+      "enabled": true
+    },
+    {
+      "name": "nvidia-kimi-repairer",
+      "model": "moonshotai/kimi-k3",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "roles": [],
+      "temperature": 0.55,
+      "top_p": 0.9,
+      "max_tokens": 8192,
+      "timeout": 300,
+      "retries": 0,
+      "enabled": true
+    }
+  ]
+}

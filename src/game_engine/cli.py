@@ -11,6 +11,7 @@ from .packaging import package_game
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
 from .source_audit import SourceGameplayLab
+from .repair import RepairForge
 from .schema import Brief, Concept
 
 
@@ -74,6 +75,24 @@ def cmd_source_audit(args: argparse.Namespace) -> int:
     return 0 if any(row.get("critic_count", 0) >= args.min_critics for row in summary["ranking"]) else 2
 
 
+def cmd_repair(args: argparse.Namespace) -> int:
+    payload = json.loads(Path(args.winner).read_text())
+    brief = Brief.from_dict(payload["brief"])
+    concept = Concept.from_dict(payload["concept"])
+    specs = load_provider_specs(Path(args.providers))
+    clients = build_clients(specs)
+    results = RepairForge(clients, max_workers=args.workers).build(
+        brief,
+        concept,
+        Path(args.builds),
+        Path(args.audits),
+        Path(args.out),
+        max_parents=args.max_parents,
+    )
+    print(json.dumps([r.__dict__ if hasattr(r, "__dict__") else {k: getattr(r, k) for k in r.__slots__} for r in results], indent=2))
+    return 0 if not results or any(r.ok for r in results) else 2
+
+
 def cmd_pack(args: argparse.Namespace) -> int:
     report = package_game(Path(args.source), Path(args.zip), limit_bytes=args.limit)
     print(f"{report.compressed_bytes}/{report.limit_bytes} bytes ({'PASS' if report.ok else 'FAIL'})")
@@ -128,6 +147,16 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--workers", type=int, default=4)
     audit.add_argument("--min-critics", type=int, default=2)
     audit.set_defaults(func=cmd_source_audit)
+
+    repair = sub.add_parser("repair", help="create surgical child builds from prototypes marked repair by gameplay audits")
+    repair.add_argument("winner", help="champion winner.json defining the intended concept")
+    repair.add_argument("builds", help="parent prototype directory containing builds.json")
+    repair.add_argument("audits", help="source-audit output directory containing audits.json")
+    repair.add_argument("--providers", default="studio.nvidia.repair.json")
+    repair.add_argument("--out", default="runs/repairs-latest")
+    repair.add_argument("--workers", type=int, default=4)
+    repair.add_argument("--max-parents", type=int, default=1)
+    repair.set_defaults(func=cmd_repair)
 
     pack = sub.add_parser("pack", help="zip a game and enforce the compressed byte budget")
     pack.add_argument("source")
