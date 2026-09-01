@@ -35,7 +35,7 @@ concurrency:
 jobs:
   tournament:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 70
     env:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRIEF: ${{ github.event.inputs.brief || 'examples/briefs/js13k-2026.json' }}
@@ -49,7 +49,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install studio
-        run: python -m pip install -e . pytest
+        run: python -m pip install -e '.[reality]' pytest
 
       - name: Validate secret and configuration
         shell: bash
@@ -128,16 +128,45 @@ jobs:
           if not good:
               errors = [r.get('error') for r in results]
               raise SystemExit(f'no runnable byte-qualified prototype survived: {errors}')
-          winner = json.loads(Path('runs/autonomous/swarm/winner.json').read_text())
+          print('byte-qualified prototypes:', [(r['provider'], r['compressed_bytes']) for r in good])
+          PY
+
+      - name: Install browser engines
+        run: python -m playwright install --with-deps chromium firefox webkit
+
+      - name: Browser Reality Lab
+        run: |
+          game-engine reality-check "$RUN_ROOT/builds" \
+            --out "$RUN_ROOT/reality" \
+            --browsers chromium,firefox,webkit \
+            --timeout-ms 12000
+
+      - name: Qualify cross-browser reality and write run summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('runs/autonomous')
+          reality = json.loads((root / 'reality' / 'qualification.json').read_text())
+          full_pass = reality.get('full_pass_build_ids', [])
+          if not full_pass:
+              raise SystemExit(f'no prototype passed all requested browsers: {reality.get("matrix")}')
+          builds = json.loads((root / 'builds' / 'builds.json').read_text())
+          good = [r for r in builds if r.get('ok')]
+          winner = json.loads((root / 'swarm' / 'winner.json').read_text())
           summary = {
               'concept': winner['concept']['title'],
               'concept_id': winner['concept']['concept_id'],
               'prototype_survivors': len(good),
+              'cross_browser_survivors': len(full_pass),
+              'cross_browser_build_ids': full_pass,
+              'browser_matrix': reality.get('matrix', {}),
               'smallest_survivor_bytes': min(r['compressed_bytes'] for r in good),
               'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
-              'promotion_blocked_until_browser_reality_lab': True,
+              'browser_reality_lab_passed': True,
+              'promotion_blocked_until_playtest_evidence': True,
           }
-          Path('runs/autonomous/run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          (root / 'run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
           print(json.dumps(summary, indent=2))
           PY
 
@@ -157,7 +186,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Promotion remains blocked until browser/playtest evidence is implemented." >> "$GITHUB_STEP_SUMMARY"
+          echo "Browser Reality Lab is now a technical gate. Final promotion remains blocked until gameplay/playtest evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()

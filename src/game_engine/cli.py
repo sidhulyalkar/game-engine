@@ -9,6 +9,7 @@ from .config import build_clients, load_provider_specs
 from .swarm import SwarmStudio
 from .packaging import package_game
 from .prototype import PrototypeForge
+from .reality import BrowserRealityLab
 from .schema import Brief
 
 
@@ -40,6 +41,20 @@ def cmd_swarm_build(args: argparse.Namespace) -> int:
     results = PrototypeForge(clients, max_workers=args.workers).build(brief, concept, Path(args.out))
     print(json.dumps([r.__dict__ if hasattr(r, "__dict__") else {k: getattr(r, k) for k in r.__slots__} for r in results], indent=2))
     return 0 if any(r.ok for r in results) else 2
+
+
+def cmd_reality(args: argparse.Namespace) -> int:
+    browsers = [part.strip() for part in args.browsers.split(",") if part.strip()]
+    if not browsers:
+        raise ValueError("at least one browser is required")
+    summary = BrowserRealityLab(
+        browsers=browsers,
+        timeout_ms=args.timeout_ms,
+        viewport_width=args.width,
+        viewport_height=args.height,
+    ).run(Path(args.builds), Path(args.out))
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["full_pass_build_ids"] else 2
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -77,6 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--out", default="runs/build-latest")
     build.add_argument("--workers", type=int, default=4)
     build.set_defaults(func=cmd_swarm_build)
+
+    reality = sub.add_parser("reality-check", help="run byte-qualified prototypes in real browsers and capture evidence")
+    reality.add_argument("builds", help="prototype forge output directory containing builds.json")
+    reality.add_argument("--out", default="runs/reality-latest")
+    reality.add_argument("--browsers", default="chromium,firefox,webkit")
+    reality.add_argument("--timeout-ms", type=int, default=10_000)
+    reality.add_argument("--width", type=int, default=1280)
+    reality.add_argument("--height", type=int, default=720)
+    reality.set_defaults(func=cmd_reality)
 
     pack = sub.add_parser("pack", help="zip a game and enforce the compressed byte budget")
     pack.add_argument("source")
