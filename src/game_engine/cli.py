@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .autonomous import TournamentFailure, run_autonomous_tournament
 from .orchestrator import Studio
 from .config import build_clients, load_provider_specs
 from .swarm import SwarmStudio
@@ -71,6 +72,29 @@ def cmd_finalize_swarm_health(args: argparse.Namespace) -> int:
     )
     print(json.dumps(health, indent=2))
     return 0 if health["qualified"] else 2
+
+
+def cmd_autonomous_tournament(args: argparse.Namespace) -> int:
+    browsers = tuple(part.strip() for part in args.browsers.split(",") if part.strip())
+    if not browsers:
+        raise ValueError("at least one browser is required")
+    try:
+        summary = run_autonomous_tournament(
+            Path(args.brief),
+            Path(args.out),
+            args.seed,
+            primary_providers=Path(args.primary_providers),
+            rescue_providers=Path(args.rescue_providers),
+            build_providers=Path(args.build_providers),
+            audit_providers=Path(args.audit_providers),
+            repair_providers=Path(args.repair_providers),
+            browsers=browsers,
+        )
+    except TournamentFailure as exc:
+        print(json.dumps({"status": "failed", "stage": exc.stage, "message": exc.message}, indent=2))
+        return 2
+    print(json.dumps(summary, indent=2))
+    return 0
 
 
 def cmd_select_concept(args: argparse.Namespace) -> int:
@@ -214,6 +238,18 @@ def build_parser() -> argparse.ArgumentParser:
     health_final.add_argument("--rescue-providers", default=None)
     health_final.add_argument("--out", default="runs/swarm-health")
     health_final.set_defaults(func=cmd_finalize_swarm_health)
+
+    tournament = sub.add_parser("autonomous-tournament", help="run the complete evidence-gated autonomous tournament")
+    tournament.add_argument("brief")
+    tournament.add_argument("--out", default="runs/autonomous")
+    tournament.add_argument("--seed", type=int, default=13)
+    tournament.add_argument("--primary-providers", default="studio.nvidia.json")
+    tournament.add_argument("--rescue-providers", default="studio.nvidia.rescue.json")
+    tournament.add_argument("--build-providers", default="studio.nvidia.build.json")
+    tournament.add_argument("--audit-providers", default="studio.nvidia.audit.json")
+    tournament.add_argument("--repair-providers", default="studio.nvidia.repair.json")
+    tournament.add_argument("--browsers", default="chromium,firefox,webkit")
+    tournament.set_defaults(func=cmd_autonomous_tournament)
 
     select = sub.add_parser("select-concept", help="rejudge finalists from independent swarms in one shared population")
     select.add_argument("brief")
