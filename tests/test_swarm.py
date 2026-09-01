@@ -102,5 +102,5 @@ def test_partial_model_output_keeps_valid_concepts_and_records_rejection():
     assert contribution.ok
     assert len(contribution.concept_ids) == 1
     assert contribution.warnings
-    assert "core_mechanic exceeds 120 words" in contribution.warnings[0]
+    assert "core_mechanic exceeds 90 words" in contribution.warnings[0]
     assert any(c.title == "Chromatic Tension" and "provider:fake" in c.tags for c in concepts)
