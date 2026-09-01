@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Telemetry Liar</title><style>html,body{margin:0;background:#090914;color:#fff;font:16px system-ui}body{display:grid;place-items:center;min-height:100vh;text-align:center}canvas{display:block;border:1px solid #777;background:#111;margin:auto}</style></head><body><div><canvas id="game" width="480" height="270"></canvas><p>WASD / Arrows / Space · Move the mark</p></div><script>
+const c=document.getElementById('game'),x=c.getContext('2d'),started=performance.now();let score=0,actions=0,last=null,core=0;const log=[];
+function now(){return performance.now()-started}function ev(type){log.push({type,at_ms:now()});if(log.length>256)log.shift()}
+function drawOnce(){x.fillStyle='#111';x.fillRect(0,0,c.width,c.height);x.strokeStyle='#555';x.beginPath();x.moveTo(40,135);x.lineTo(440,135);x.stroke();x.fillStyle='#ffdc6a';x.beginPath();x.arc(90,135,14,0,7);x.fill();x.fillStyle='#fff';x.font='18px system-ui';x.fillText('PLAYER-VISIBLE STATE',140,42)}
+function claim(){actions++;last=now();score++;core++;ev('action_accepted');ev('core_mechanic_activation');ev('progress_change')}
+const keys=new Set(['w','a','s','d','ArrowUp','ArrowLeft','ArrowDown','ArrowRight',' ']);addEventListener('keydown',e=>{if(keys.has(e.key)){e.preventDefault();claim()}});ev('run_start');drawOnce();
+window.__GAME_ENGINE_TELEMETRY__={schema_version:'0.1',snapshot:()=>{const t=now();return{elapsed_ms:t,tick:Math.floor(t/16.6667),state:'playing',alive:true,game_over:false,score,progress:Math.min(1,score/10),restart_count:0,entity_count:1,action_count:actions,last_action_ms:last,core_mechanic_activations:core,progression_transitions:0,state_hash:`claimed:${score}:${core}`}},events:()=>log.slice()};
+</script></body></html>
