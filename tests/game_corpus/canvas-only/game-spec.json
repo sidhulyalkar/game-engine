@@ -1,0 +1,18 @@
+{
+  "spec_version": "0.1",
+  "source_concept_id": "canvas-only-fixture",
+  "title": "Canvas Only Agency",
+  "primary_category": "desktop",
+  "interaction_invariant": "Accepted keyboard input moves the player mark and advances progress without changing DOM text.",
+  "player_goal": "Move the mark across the arena using advertised controls.",
+  "controls": "WASD, arrow keys, or Space.",
+  "core_loop": ["press an advertised control", "move the mark", "gain progress"],
+  "prototype_scope": ["one arena", "one representative run"],
+  "state_machine": {"states": ["playing", "dead", "won"], "start": "playing", "restart": "fresh playing state"},
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {"hazards_or_enemies": 0, "particles_or_trail_points": 0, "timers_or_scheduled_events": 4, "simultaneous_audio_voices": 0},
+  "sensory_contract": {"visual": "player mark visibly moves on canvas", "audio": "none", "readability": "static control legend"},
+  "telemetry_contract": {"snapshot": ["elapsed_ms", "state", "score", "progress", "entity_count", "action_count", "core_mechanic_activations", "state_hash"], "events": ["run_start", "action_accepted", "progress_change", "core_mechanic_activation"]},
+  "byte_priorities": ["causal visual evidence"],
+  "non_goals": ["DOM score changes", "idle animation", "networking"]
+}
