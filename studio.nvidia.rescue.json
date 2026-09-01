@@ -8,8 +8,8 @@
       "roles": ["gameplay_director", "competition_judge"],
       "temperature": 0.85,
       "top_p": 0.95,
-      "max_tokens": 4096,
-      "timeout": 180,
+      "max_tokens": 2300,
+      "timeout": 150,
       "retries": 1,
       "max_concurrency": 1,
       "enabled": true
@@ -22,8 +22,8 @@
       "roles": ["online_specialist", "desktop_specialist"],
       "temperature": 0.85,
       "top_p": 0.95,
-      "max_tokens": 4096,
-      "timeout": 180,
+      "max_tokens": 2300,
+      "timeout": 150,
       "retries": 1,
       "max_concurrency": 1,
       "enabled": true
