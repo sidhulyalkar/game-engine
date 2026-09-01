@@ -138,3 +138,15 @@ game-engine swarm-ideate examples/briefs/js13k-2026.json \
 ```
 
 Each provider/role assignment runs independently and failure-isolated. The run records `contributions.json`, so a flaky endpoint or malformed model response cannot silently poison the rest of the swarm. NVIDIA NIM is supported through the same adapter because its hosted endpoint is OpenAI-compatible.
+
+## Prototype forge
+
+Once an ideation run has produced `winner.json`, enabled providers can compete again as implementation engineers:
+
+```bash
+game-engine swarm-build runs/js13k-2026/winner.json \
+  --providers studio.local.json \
+  --out runs/prototypes-01
+```
+
+Each model receives the same brief and champion concept, returns a standalone `index.html`, and is isolated into its own build directory. The forge immediately creates a ZIP, checks the real compressed byte limit, records headroom/warnings/failures in `builds.json`, and never lets one broken model response erase the other contenders. This is intentionally a **prototype** gate: gameplay/browser evidence should decide which build survives next, not file size alone.

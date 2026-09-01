@@ -8,6 +8,7 @@ from .orchestrator import Studio
 from .config import build_clients, load_provider_specs
 from .swarm import SwarmStudio
 from .packaging import package_game
+from .prototype import PrototypeForge
 from .schema import Brief
 
 
@@ -27,6 +28,18 @@ def cmd_swarm_ideate(args: argparse.Namespace) -> int:
     )
     print(json.dumps(manifest, indent=2))
     return 0
+
+
+def cmd_swarm_build(args: argparse.Namespace) -> int:
+    payload = json.loads(Path(args.winner).read_text())
+    brief = Brief.from_dict(payload["brief"])
+    from .schema import Concept
+    concept = Concept.from_dict(payload["concept"])
+    specs = load_provider_specs(Path(args.providers))
+    clients = build_clients(specs)
+    results = PrototypeForge(clients, max_workers=args.workers).build(brief, concept, Path(args.out))
+    print(json.dumps([r.__dict__ if hasattr(r, "__dict__") else {k: getattr(r, k) for k in r.__slots__} for r in results], indent=2))
+    return 0 if any(r.ok for r in results) else 2
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -57,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     swarm.add_argument("--per-call", type=int, default=3)
     swarm.add_argument("--workers", type=int, default=8)
     swarm.set_defaults(func=cmd_swarm_ideate)
+
+    build = sub.add_parser("swarm-build", help="turn a winning concept into competing runnable model prototypes")
+    build.add_argument("winner")
+    build.add_argument("--providers", default="studio.example.json")
+    build.add_argument("--out", default="runs/build-latest")
+    build.add_argument("--workers", type=int, default=4)
+    build.set_defaults(func=cmd_swarm_build)
 
     pack = sub.add_parser("pack", help="zip a game and enforce the compressed byte budget")
     pack.add_argument("source")

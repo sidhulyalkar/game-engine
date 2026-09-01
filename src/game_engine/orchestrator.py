@@ -52,6 +52,7 @@ class Studio:
             for i, c in enumerate(concepts)
         ], indent=2) + "\n")
         (output_dir / "winner.json").write_text(json.dumps({
+            "brief": brief.to_dict(),
             "concept": winner.to_dict(),
             "scorecard": score_map[winner.concept_id].to_dict(),
         }, indent=2) + "\n")
