@@ -10,7 +10,8 @@ from .swarm import SwarmStudio
 from .packaging import package_game
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
-from .schema import Brief
+from .source_audit import SourceGameplayLab
+from .schema import Brief, Concept
 
 
 def cmd_ideate(args: argparse.Namespace) -> int:
@@ -34,7 +35,6 @@ def cmd_swarm_ideate(args: argparse.Namespace) -> int:
 def cmd_swarm_build(args: argparse.Namespace) -> int:
     payload = json.loads(Path(args.winner).read_text())
     brief = Brief.from_dict(payload["brief"])
-    from .schema import Concept
     concept = Concept.from_dict(payload["concept"])
     specs = load_provider_specs(Path(args.providers))
     clients = build_clients(specs)
@@ -55,6 +55,23 @@ def cmd_reality(args: argparse.Namespace) -> int:
     ).run(Path(args.builds), Path(args.out))
     print(json.dumps(summary, indent=2))
     return 0 if summary["full_pass_build_ids"] else 2
+
+
+def cmd_source_audit(args: argparse.Namespace) -> int:
+    payload = json.loads(Path(args.winner).read_text())
+    brief = Brief.from_dict(payload["brief"])
+    concept = Concept.from_dict(payload["concept"])
+    specs = load_provider_specs(Path(args.providers))
+    clients = build_clients(specs)
+    summary = SourceGameplayLab(clients, max_workers=args.workers).run(
+        brief,
+        concept,
+        Path(args.builds),
+        Path(args.out),
+        Path(args.reality) if args.reality else None,
+    )
+    print(json.dumps(summary, indent=2))
+    return 0 if any(row.get("critic_count", 0) >= args.min_critics for row in summary["ranking"]) else 2
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -101,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     reality.add_argument("--width", type=int, default=1280)
     reality.add_argument("--height", type=int, default=720)
     reality.set_defaults(func=cmd_reality)
+
+    audit = sub.add_parser("source-audit", help="have independent gameplay critics inspect source plus browser evidence")
+    audit.add_argument("winner", help="champion winner.json defining the intended concept")
+    audit.add_argument("builds", help="prototype forge output directory containing builds.json")
+    audit.add_argument("--reality", default=None, help="optional Browser Reality Lab output directory")
+    audit.add_argument("--providers", default="studio.nvidia.audit.json")
+    audit.add_argument("--out", default="runs/audit-latest")
+    audit.add_argument("--workers", type=int, default=4)
+    audit.add_argument("--min-critics", type=int, default=2)
+    audit.set_defaults(func=cmd_source_audit)
 
     pack = sub.add_parser("pack", help="zip a game and enforce the compressed byte budget")
     pack.add_argument("source")

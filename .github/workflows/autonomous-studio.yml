@@ -30,12 +30,12 @@ permissions:
 
 concurrency:
   group: autonomous-nvidia-studio-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   tournament:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 80
     env:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRIEF: ${{ github.event.inputs.brief || 'examples/briefs/js13k-2026.json' }}
@@ -51,26 +51,32 @@ jobs:
       - name: Install studio
         run: python -m pip install -e '.[reality]' pytest
 
-      - name: Validate secret and configuration
+      - name: Validate secret and configurations
         shell: bash
         run: |
           if [ -z "${NVIDIA_API_KEY:-}" ]; then
-            echo "::error::Repository Actions secret NVIDIA_API_KEY is not available to this workflow."
+            echo "::error::Repository Actions secret NVIDIA_API_KEY is not available."
             exit 2
           fi
           test -f "$BRIEF"
-          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json; do test -f "$cfg"; done
+          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json studio.nvidia.audit.json; do
+            test -f "$cfg"
+          done
           python - <<'PY'
           from pathlib import Path
           from game_engine.config import load_provider_specs
           primary = load_provider_specs(Path('studio.nvidia.json'))
           rescue = load_provider_specs(Path('studio.nvidia.rescue.json'))
           builders = load_provider_specs(Path('studio.nvidia.build.json'))
+          critics = load_provider_specs(Path('studio.nvidia.audit.json'))
           assert len(primary) >= 3 and len({s.model for s in primary}) >= 3
-          assert len(rescue) >= 2 and len(builders) >= 2
+          assert len(rescue) >= 2
+          assert len(builders) >= 2
+          assert len(critics) >= 2 and len({s.model for s in critics}) >= 2
           print('primary:', ', '.join(s.model for s in primary))
           print('rescue:', ', '.join(s.model for s in rescue))
           print('builders:', ', '.join(s.model for s in builders))
+          print('critics:', ', '.join(s.model for s in critics))
           PY
 
       - name: Unit and contract tests
@@ -79,7 +85,10 @@ jobs:
       - name: Deterministic exploration baseline
         run: |
           mkdir -p "$RUN_ROOT"
-          game-engine ideate "$BRIEF" --out "$RUN_ROOT/deterministic" --seed "$STUDIO_SEED" --concepts 32
+          game-engine ideate "$BRIEF" \
+            --out "$RUN_ROOT/deterministic" \
+            --seed "$STUDIO_SEED" \
+            --concepts 32
 
       - name: Primary heterogeneous swarm
         run: |
@@ -107,7 +116,7 @@ jobs:
           print(json.dumps(m, indent=2))
           PY
 
-      - name: Rescue swarm for critical gameplay roles
+      - name: Rescue critical gameplay roles
         continue-on-error: true
         run: |
           game-engine swarm-ideate "$BRIEF" \
@@ -121,16 +130,16 @@ jobs:
       - name: Select evidence-leading concept
         run: |
           python - <<'PY'
-          import json, shutil
+          import json
           from pathlib import Path
           root = Path('runs/autonomous')
           candidates = []
           for name in ('swarm-primary', 'swarm-rescue'):
-              path = root / name / 'winner.json'
+              winner_path = root / name / 'winner.json'
               manifest_path = root / name / 'manifest.json'
-              if not path.exists() or not manifest_path.exists():
+              if not winner_path.exists() or not manifest_path.exists():
                   continue
-              winner = json.loads(path.read_text())
+              winner = json.loads(winner_path.read_text())
               manifest = json.loads(manifest_path.read_text())
               if name == 'swarm-rescue' and int(manifest.get('successful_assignments', 0)) < 2:
                   continue
@@ -176,21 +185,20 @@ jobs:
           import json
           from pathlib import Path
           root = Path('runs/autonomous')
-          good = []
-          failures = []
-          for name in ('builds-a', 'builds-b'):
-              path = root / name / 'builds.json'
+          good, failures = [], []
+          for race in ('a', 'b'):
+              path = root / f'builds-{race}' / 'builds.json'
               if not path.exists():
-                  failures.append(f'{name}: missing builds.json')
+                  failures.append(f'builds-{race}: missing builds.json')
                   continue
               rows = json.loads(path.read_text())
-              good.extend((name, row) for row in rows if row.get('ok'))
-              failures.extend(f"{name}/{row.get('provider')}: {row.get('error')}" for row in rows if not row.get('ok'))
+              good.extend((race, row) for row in rows if row.get('ok'))
+              failures.extend(f"{race}/{row.get('provider')}: {row.get('error')}" for row in rows if not row.get('ok'))
           if not good:
               raise SystemExit(f'no byte-qualified implementation survived: {failures}')
-          print('byte-qualified field:', [(name, row['provider'], row['compressed_bytes']) for name, row in good])
+          print('byte-qualified field:', [(race, row['provider'], row['compressed_bytes']) for race, row in good])
           if len(good) < 2:
-              print('::warning::Only one implementation survived; Browser Reality Lab will still run but the field is not yet competitive.')
+              print('::warning::Only one implementation survived; the field is not yet competitive.')
           PY
 
       - name: Install browser engines
@@ -201,7 +209,10 @@ jobs:
         shell: bash
         run: |
           if [ -f "$RUN_ROOT/builds-a/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-a" --out "$RUN_ROOT/reality-a" --browsers chromium,firefox,webkit --timeout-ms 12000
+            game-engine reality-check "$RUN_ROOT/builds-a" \
+              --out "$RUN_ROOT/reality-a" \
+              --browsers chromium,firefox,webkit \
+              --timeout-ms 12000
           fi
 
       - name: Browser Reality Lab race B
@@ -209,29 +220,31 @@ jobs:
         shell: bash
         run: |
           if [ -f "$RUN_ROOT/builds-b/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-b" --out "$RUN_ROOT/reality-b" --browsers chromium,firefox,webkit --timeout-ms 12000
+            game-engine reality-check "$RUN_ROOT/builds-b" \
+              --out "$RUN_ROOT/reality-b" \
+              --browsers chromium,firefox,webkit \
+              --timeout-ms 12000
           fi
 
-      - name: Qualify cross-browser field and write run summary
+      - name: Qualify cross-browser field
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('runs/autonomous')
-          full_pass = []
-          matrices = {}
-          for name in ('a', 'b'):
-              path = root / f'reality-{name}' / 'qualification.json'
+          full_pass, matrices = [], {}
+          for race in ('a', 'b'):
+              path = root / f'reality-{race}' / 'qualification.json'
               if not path.exists():
                   continue
               q = json.loads(path.read_text())
-              matrices[name] = q.get('matrix', {})
-              full_pass.extend((name, build_id) for build_id in q.get('full_pass_build_ids', []))
+              matrices[race] = q.get('matrix', {})
+              full_pass.extend((race, build_id) for build_id in q.get('full_pass_build_ids', []))
           if not full_pass:
               raise SystemExit(f'no implementation passed Chromium + Firefox + WebKit: {matrices}')
           good = []
-          for name in ('a', 'b'):
-              path = root / f'builds-{name}' / 'builds.json'
+          for race in ('a', 'b'):
+              path = root / f'builds-{race}' / 'builds.json'
               if path.exists():
                   good.extend(row for row in json.loads(path.read_text()) if row.get('ok'))
           winner = json.loads((root / 'champion' / 'winner.json').read_text())
@@ -249,9 +262,68 @@ jobs:
               'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
               'browser_reality_lab_passed': True,
               'competitive_field': len(full_pass) >= 2,
-              'promotion_blocked_until_playtest_evidence': True,
+              'promotion_blocked_until_gameplay_evidence': True,
           }
           (root / 'run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Source-aware gameplay audit race A
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/reality-a/qualification.json" ]; then
+            game-engine source-audit "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-a" \
+              --reality "$RUN_ROOT/reality-a" \
+              --providers studio.nvidia.audit.json \
+              --out "$RUN_ROOT/audit-a" \
+              --workers 4 \
+              --min-critics 2
+          fi
+
+      - name: Source-aware gameplay audit race B
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/reality-b/qualification.json" ]; then
+            game-engine source-audit "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-b" \
+              --reality "$RUN_ROOT/reality-b" \
+              --providers studio.nvidia.audit.json \
+              --out "$RUN_ROOT/audit-b" \
+              --workers 4 \
+              --min-critics 2
+          fi
+
+      - name: Qualify gameplay-audit evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('runs/autonomous')
+          qualified = []
+          audit_matrix = {}
+          for race in ('a', 'b'):
+              q_path = root / f'reality-{race}' / 'qualification.json'
+              a_path = root / f'audit-{race}' / 'audit-summary.json'
+              if not q_path.exists() or not a_path.exists():
+                  continue
+              allowed = set(json.loads(q_path.read_text()).get('full_pass_build_ids', []))
+              audit = json.loads(a_path.read_text())
+              rows = [row for row in audit.get('ranking', []) if row.get('build_id') in allowed]
+              audit_matrix[race] = rows
+              qualified.extend((race, row) for row in rows if int(row.get('critic_count', 0)) >= 2)
+          if not qualified:
+              raise SystemExit(f'no cross-browser build received two independent gameplay audits: {audit_matrix}')
+          summary_path = root / 'run-summary.json'
+          summary = json.loads(summary_path.read_text())
+          summary['gameplay_audit_evidence'] = True
+          summary['gameplay_audit_matrix'] = audit_matrix
+          summary['gameplay_advance_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'advance']
+          summary['gameplay_repair_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'repair']
+          summary['gameplay_reject_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'reject']
+          summary['promotion_blocked_until_repair_and_playtest_loop'] = True
+          summary.pop('promotion_blocked_until_gameplay_evidence', None)
+          summary_path.write_text(json.dumps(summary, indent=2) + '\n')
           print(json.dumps(summary, indent=2))
           PY
 
@@ -271,7 +343,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Browser Reality Lab is a technical gate. Final promotion remains blocked until gameplay/playtest evidence exists." >> "$GITHUB_STEP_SUMMARY"
+          echo "Bad gameplay is evidence, not an infrastructure failure. Final promotion remains blocked until repair/mutation and playtest evidence exist." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()
