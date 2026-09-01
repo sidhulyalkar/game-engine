@@ -1,4 +1,6 @@
-from game_engine.source_audit import AuditFinding, CriticAudit, aggregate_audits
+import json
+
+from game_engine.source_audit import AuditFinding, CriticAudit, _filter_browser_qualified, aggregate_audits
 
 
 def audit(provider, verdict, score=8.0, findings=None):
@@ -44,3 +46,14 @@ def test_no_successful_critics_rejects():
     )
     assert result.status == "reject"
     assert result.critic_count == 0
+
+
+def test_browser_qualification_filters_expensive_critic_field(tmp_path):
+    reality = tmp_path / "reality"
+    reality.mkdir()
+    (reality / "qualification.json").write_text(json.dumps({"full_pass_build_ids": ["keep"]}))
+    builds = [
+        {"build_id": "keep", "provider": "a"},
+        {"build_id": "drop", "provider": "b"},
+    ]
+    assert _filter_browser_qualified(builds, reality) == [{"build_id": "keep", "provider": "a"}]
