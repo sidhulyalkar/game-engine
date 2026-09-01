@@ -26,6 +26,11 @@
       "timeout": 120,
       "retries": 0,
       "max_concurrency": 2,
+      "extra_body": {
+        "chat_template_kwargs": {
+          "thinking": false
+        }
+      },
       "enabled": true
     },
     {
