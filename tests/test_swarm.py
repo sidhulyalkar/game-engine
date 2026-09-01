@@ -1,3 +1,5 @@
+import threading
+import time
 from dataclasses import dataclass
 
 from game_engine.schema import Brief
@@ -8,6 +10,7 @@ from game_engine.swarm import SwarmStudio, _extract_json
 class FakeSpec:
     name: str = "fake"
     roles: tuple[str, ...] = ("wild_inventor",)
+    max_concurrency: int = 1
 
 
 class FakeClient:
@@ -27,3 +30,39 @@ def test_swarm_accepts_provider_concepts():
     assert any("provider:fake" in c.tags for c in concepts)
     assert contributions[0].ok
     assert len(scores) == len(concepts)
+
+
+def test_provider_local_concurrency_is_bounded():
+    @dataclass
+    class TwoRoleSpec:
+        name: str = "bounded"
+        roles: tuple[str, ...] = ("wild_inventor", "byte_architect")
+        max_concurrency: int = 1
+
+    class TrackingClient(FakeClient):
+        name = "bounded"
+
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def complete(self, system: str, prompt: str) -> str:
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.02)
+                return super().complete(system, prompt)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    client = TrackingClient()
+    brief = Brief(theme="Unicorns and Rainbows")
+    _, _, contributions = SwarmStudio([(TwoRoleSpec(), client)], max_workers=4).ideate(
+        brief, deterministic_seeds=4, concepts_per_call=1
+    )
+    assert len(contributions) == 2
+    assert all(row.ok for row in contributions)
+    assert client.max_active == 1
