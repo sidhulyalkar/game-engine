@@ -22,8 +22,8 @@ def inventor_prompt(role: AgentRole, brief: Brief, seeds: list[Concept], count: 
     schema = {
         "concepts": [{
             "title": "string",
-            "hook": "one sentence",
-            "core_mechanic": "one mechanically precise paragraph",
+            "hook": "one sentence, ideally <=30 words",
+            "core_mechanic": "one mechanically precise paragraph, <=90 words",
             "player_goal": "string",
             "controls": "string",
             "core_loop": ["step 1", "step 2", "step 3"],
@@ -36,4 +36,4 @@ def inventor_prompt(role: AgentRole, brief: Brief, seeds: list[Concept], count: 
             "tags": ["mechanic", "physics", "structure"]
         }]
     }
-    return f"""ROLE: {role.name}\nMISSION: {role.mission}\nVETO: {role.veto or 'none'}\n\nBRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nMECHANIC SEEDS (reinterpret, do not merely rename):\n{json.dumps(seed_payload, indent=2)}\n\nGenerate exactly {count} substantially different concepts. Theme should alter play/state when possible. Favor one deep interaction over feature lists. Controls must be learnable quickly. Every graphical/audio flourish must have a procedural implementation story.\n\nReturn exactly this JSON shape and no markdown:\n{json.dumps(schema, indent=2)}"""
+    return f"""ROLE: {role.name}\nMISSION: {role.mission}\nVETO: {role.veto or 'none'}\n\nBRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nMECHANIC SEEDS (reinterpret, do not merely rename):\n{json.dumps(seed_payload, indent=2)}\n\nGenerate exactly {count} substantially different concepts. Theme should alter play/state when possible. Favor one deep interaction over feature lists. The core mechanic must be a playable game by itself, not a bundle of modes or meta systems. Keep core_mechanic <=90 words; use escalation for later richness. Controls must be learnable quickly. Every graphical/audio flourish must have a procedural implementation story. Daily seeds, leaderboards, ghosts, networking, co-op, progression systems, and social features are optional wrappers, not substitutes for the core interaction; keep them outside core_mechanic unless your specialist mission absolutely requires one, and preserve a complete offline core first.\n\nReturn exactly this JSON shape and no markdown:\n{json.dumps(schema, indent=2)}"""
