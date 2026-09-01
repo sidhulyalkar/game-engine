@@ -1,0 +1,18 @@
+{
+  "spec_version": "0.1",
+  "source_concept_id": "telemetry-liar-fixture",
+  "title": "Telemetry Liar",
+  "primary_category": "desktop",
+  "interaction_invariant": "Accepted input should visibly move the mark and advance progress.",
+  "player_goal": "Move the mark with keyboard input.",
+  "controls": "WASD, arrow keys, or Space.",
+  "core_loop": ["press an advertised control", "observe movement", "gain progress"],
+  "prototype_scope": ["one arena", "one representative run"],
+  "state_machine": {"states": ["playing", "dead", "won"], "start": "playing", "restart": "fresh playing state"},
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {"hazards_or_enemies": 0, "particles_or_trail_points": 0, "timers_or_scheduled_events": 4, "simultaneous_audio_voices": 0},
+  "sensory_contract": {"visual": "input must visibly alter the arena", "audio": "none", "readability": "static controls"},
+  "telemetry_contract": {"snapshot": ["elapsed_ms", "state", "score", "progress", "entity_count", "action_count", "core_mechanic_activations", "state_hash"], "events": ["run_start", "action_accepted", "progress_change", "core_mechanic_activation"]},
+  "byte_priorities": ["visible action consequence"],
+  "non_goals": ["networking"]
+}
