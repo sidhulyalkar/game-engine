@@ -35,7 +35,7 @@ concurrency:
 jobs:
   tournament:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 100
     env:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRIEF: ${{ github.event.inputs.brief || 'examples/briefs/js13k-2026.json' }}
@@ -59,24 +59,26 @@ jobs:
             exit 2
           fi
           test -f "$BRIEF"
-          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json studio.nvidia.audit.json; do
+          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json studio.nvidia.audit.json studio.nvidia.repair.json; do
             test -f "$cfg"
           done
           python - <<'PY'
           from pathlib import Path
           from game_engine.config import load_provider_specs
-          primary = load_provider_specs(Path('studio.nvidia.json'))
-          rescue = load_provider_specs(Path('studio.nvidia.rescue.json'))
-          builders = load_provider_specs(Path('studio.nvidia.build.json'))
-          critics = load_provider_specs(Path('studio.nvidia.audit.json'))
-          assert len(primary) >= 3 and len({s.model for s in primary}) >= 3
-          assert len(rescue) >= 2
-          assert len(builders) >= 2
-          assert len(critics) >= 2 and len({s.model for s in critics}) >= 2
-          print('primary:', ', '.join(s.model for s in primary))
-          print('rescue:', ', '.join(s.model for s in rescue))
-          print('builders:', ', '.join(s.model for s in builders))
-          print('critics:', ', '.join(s.model for s in critics))
+          groups = {
+              'primary': load_provider_specs(Path('studio.nvidia.json')),
+              'rescue': load_provider_specs(Path('studio.nvidia.rescue.json')),
+              'builders': load_provider_specs(Path('studio.nvidia.build.json')),
+              'critics': load_provider_specs(Path('studio.nvidia.audit.json')),
+              'repairers': load_provider_specs(Path('studio.nvidia.repair.json')),
+          }
+          assert len(groups['primary']) >= 3 and len({s.model for s in groups['primary']}) >= 3
+          for name in ('rescue', 'builders', 'critics', 'repairers'):
+              assert len(groups[name]) >= 2, f'{name} needs at least two providers'
+          assert len({s.model for s in groups['critics']}) >= 2
+          assert len({s.model for s in groups['repairers']}) >= 2
+          for name, specs in groups.items():
+              print(name + ':', ', '.join(s.model for s in specs))
           PY
 
       - name: Unit and contract tests
@@ -85,10 +87,7 @@ jobs:
       - name: Deterministic exploration baseline
         run: |
           mkdir -p "$RUN_ROOT"
-          game-engine ideate "$BRIEF" \
-            --out "$RUN_ROOT/deterministic" \
-            --seed "$STUDIO_SEED" \
-            --concepts 32
+          game-engine ideate "$BRIEF" --out "$RUN_ROOT/deterministic" --seed "$STUDIO_SEED" --concepts 32
 
       - name: Primary heterogeneous swarm
         run: |
@@ -209,10 +208,7 @@ jobs:
         shell: bash
         run: |
           if [ -f "$RUN_ROOT/builds-a/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-a" \
-              --out "$RUN_ROOT/reality-a" \
-              --browsers chromium,firefox,webkit \
-              --timeout-ms 12000
+            game-engine reality-check "$RUN_ROOT/builds-a" --out "$RUN_ROOT/reality-a" --browsers chromium,firefox,webkit --timeout-ms 12000
           fi
 
       - name: Browser Reality Lab race B
@@ -220,10 +216,7 @@ jobs:
         shell: bash
         run: |
           if [ -f "$RUN_ROOT/builds-b/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-b" \
-              --out "$RUN_ROOT/reality-b" \
-              --browsers chromium,firefox,webkit \
-              --timeout-ms 12000
+            game-engine reality-check "$RUN_ROOT/builds-b" --out "$RUN_ROOT/reality-b" --browsers chromium,firefox,webkit --timeout-ms 12000
           fi
 
       - name: Qualify cross-browser field
@@ -277,8 +270,7 @@ jobs:
               --reality "$RUN_ROOT/reality-a" \
               --providers studio.nvidia.audit.json \
               --out "$RUN_ROOT/audit-a" \
-              --workers 4 \
-              --min-critics 2
+              --workers 4 --min-critics 2
           fi
 
       - name: Source-aware gameplay audit race B
@@ -290,8 +282,7 @@ jobs:
               --reality "$RUN_ROOT/reality-b" \
               --providers studio.nvidia.audit.json \
               --out "$RUN_ROOT/audit-b" \
-              --workers 4 \
-              --min-critics 2
+              --workers 4 --min-critics 2
           fi
 
       - name: Qualify gameplay-audit evidence
@@ -300,8 +291,7 @@ jobs:
           import json
           from pathlib import Path
           root = Path('runs/autonomous')
-          qualified = []
-          audit_matrix = {}
+          qualified, audit_matrix = [], {}
           for race in ('a', 'b'):
               q_path = root / f'reality-{race}' / 'qualification.json'
               a_path = root / f'audit-{race}' / 'audit-summary.json'
@@ -327,6 +317,65 @@ jobs:
           print(json.dumps(summary, indent=2))
           PY
 
+      - name: Evidence-guided repair cycle A
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/audit-a/audits.json" ]; then
+            game-engine repair-cycle "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-a" "$RUN_ROOT/audit-a" \
+              --repair-providers studio.nvidia.repair.json \
+              --audit-providers studio.nvidia.audit.json \
+              --out "$RUN_ROOT/repair-cycle-a" \
+              --browsers chromium,firefox,webkit \
+              --timeout-ms 12000 --workers 4 --max-parents 1
+          fi
+
+      - name: Evidence-guided repair cycle B
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/audit-b/audits.json" ]; then
+            game-engine repair-cycle "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-b" "$RUN_ROOT/audit-b" \
+              --repair-providers studio.nvidia.repair.json \
+              --audit-providers studio.nvidia.audit.json \
+              --out "$RUN_ROOT/repair-cycle-b" \
+              --browsers chromium,firefox,webkit \
+              --timeout-ms 12000 --workers 4 --max-parents 1
+          fi
+
+      - name: Qualify repair-cycle evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('runs/autonomous')
+          summaries = {}
+          repairable = 0
+          for race in ('a', 'b'):
+              parent_summary = root / f'audit-{race}' / 'audit-summary.json'
+              if parent_summary.exists():
+                  repairable += len(json.loads(parent_summary.read_text()).get('repair_build_ids', []))
+              cycle_path = root / f'repair-cycle-{race}' / 'cycle-summary.json'
+              if cycle_path.exists():
+                  summaries[race] = json.loads(cycle_path.read_text())
+          if repairable and not summaries:
+              raise SystemExit('repairable parents existed but no repair-cycle evidence was produced')
+          failed = {race: row for race, row in summaries.items() if row.get('status') not in {'complete', 'no_repair_candidates'}}
+          if failed:
+              raise SystemExit(f'repair-cycle infrastructure/evidence failure: {failed}')
+          improving = [f"{race}:{build_id}" for race, row in summaries.items() for build_id in row.get('evidence_improving_children', [])]
+          summary_path = root / 'run-summary.json'
+          summary = json.loads(summary_path.read_text())
+          summary['repairable_parent_count'] = repairable
+          summary['repair_cycle_evidence'] = summaries
+          summary['evidence_improving_children'] = improving
+          summary['lineage_improved_this_run'] = bool(improving)
+          summary['promotion_blocked_until_agentic_and_player_facing_playtests'] = True
+          summary.pop('promotion_blocked_until_repair_and_playtest_loop', None)
+          summary_path.write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+
       - name: Write Actions summary
         if: always()
         shell: bash
@@ -343,7 +392,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Bad gameplay is evidence, not an infrastructure failure. Final promotion remains blocked until repair/mutation and playtest evidence exist." >> "$GITHUB_STEP_SUMMARY"
+          echo "Bad gameplay and failed mutations are evidence, not infrastructure failures. Final promotion remains blocked until agentic/player-facing playtests exist." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()
