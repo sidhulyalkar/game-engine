@@ -7,6 +7,21 @@ import urllib.error
 import urllib.request
 
 
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    if isinstance(exc, urllib.error.HTTPError):
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        if retry_after:
+            try:
+                return max(1.0, min(60.0, float(retry_after)))
+            except ValueError:
+                pass
+        if exc.code == 429:
+            return min(30.0, 8.0 * (2**attempt))
+        if 500 <= exc.code < 600:
+            return min(20.0, 4.0 * (2**attempt))
+    return min(12.0, 2.0 * (2**attempt))
+
+
 class OpenAICompatibleClient:
     """Dependency-free adapter for OpenAI-compatible chat-completions endpoints."""
 
@@ -87,7 +102,7 @@ class OpenAICompatibleClient:
                 last_error = exc
                 if attempt >= self.retries:
                     raise RuntimeError(f"Provider transport failure for model {self.model}: {type(exc).__name__}") from exc
-            if attempt < self.retries:
-                time.sleep(min(2**attempt, 8))
+            if attempt < self.retries and last_error is not None:
+                time.sleep(_retry_delay(last_error, attempt))
 
         raise RuntimeError(f"Provider failed after retries: {type(last_error).__name__}")
