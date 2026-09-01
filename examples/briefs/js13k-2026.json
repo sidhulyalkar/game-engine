@@ -1,0 +1,23 @@
+{
+  "theme": "Unicorns and Rainbows",
+  "target_categories": ["desktop", "mobile", "online", "webxr"],
+  "size_limit_bytes": 13312,
+  "desired_session_seconds": 240,
+  "audience": "js13kGames players and judges who reward novelty, game feel, clarity, and technical elegance",
+  "must_have": [
+    "a mechanic with a one-sentence explanation",
+    "meaningful mastery in the first minute",
+    "procedural graphics",
+    "procedural audio",
+    "fast restart",
+    "offline-first core game"
+  ],
+  "avoid": [
+    "generic survivors clone",
+    "theme as cosmetic skin only",
+    "tutorial walls of text",
+    "more than three primary actions",
+    "large shipped media assets"
+  ],
+  "creative_direction": "cute at first glance, mechanically surprising underneath; use unicorn/rainbow ideas as physics or state, not wallpaper"
+}

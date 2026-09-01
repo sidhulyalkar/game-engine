@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "game-engine-swarm"
+version = "0.1.0"
+description = "Evolutionary swarm studio for designing tiny web games, starting with js13kGames."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Sidharth Hulyalkar"}]
+dependencies = []
+
+[project.scripts]
+game-engine = "game_engine.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
