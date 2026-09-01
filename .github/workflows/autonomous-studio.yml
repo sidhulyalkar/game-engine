@@ -41,6 +41,7 @@ jobs:
       BRIEF: ${{ github.event.inputs.brief || 'examples/briefs/js13k-2026.json' }}
       STUDIO_SEED: ${{ github.event.inputs.seed || github.run_number }}
       RUN_ROOT: runs/autonomous
+      PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +52,7 @@ jobs:
       - name: Install studio
         run: python -m pip install -e '.[reality]' pytest
 
-      - name: Validate secret and configurations
+      - name: Validate secret and configuration files
         shell: bash
         run: |
           if [ -z "${NVIDIA_API_KEY:-}" ]; then
@@ -62,301 +63,24 @@ jobs:
           for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json studio.nvidia.audit.json studio.nvidia.repair.json; do
             test -f "$cfg"
           done
-          python - <<'PY'
-          from pathlib import Path
-          from game_engine.config import load_provider_specs
-          groups = {
-              'primary': load_provider_specs(Path('studio.nvidia.json')),
-              'rescue': load_provider_specs(Path('studio.nvidia.rescue.json')),
-              'builders': load_provider_specs(Path('studio.nvidia.build.json')),
-              'critics': load_provider_specs(Path('studio.nvidia.audit.json')),
-              'repairers': load_provider_specs(Path('studio.nvidia.repair.json')),
-          }
-          assert len(groups['primary']) >= 3 and len({s.model for s in groups['primary']}) >= 3
-          for name in ('rescue', 'builders', 'critics', 'repairers'):
-              assert len(groups[name]) >= 2, f'{name} needs at least two providers'
-          assert len({s.model for s in groups['critics']}) >= 2
-          assert len({s.model for s in groups['repairers']}) >= 2
-          for name, specs in groups.items():
-              print(name + ':', ', '.join(s.model for s in specs))
-          PY
 
       - name: Unit and contract tests
         run: pytest -q
 
-      - name: Deterministic exploration baseline
-        run: |
-          mkdir -p "$RUN_ROOT"
-          game-engine ideate "$BRIEF" --out "$RUN_ROOT/deterministic" --seed "$STUDIO_SEED" --concepts 32
-
-      - name: Primary heterogeneous swarm
-        run: |
-          game-engine swarm-ideate "$BRIEF" \
-            --providers studio.nvidia.json \
-            --out "$RUN_ROOT/swarm-primary" \
-            --seed "$STUDIO_SEED" \
-            --seeds 24 \
-            --per-call 3 \
-            --workers 6
-
-      - name: Qualify primary swarm
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous/swarm-primary')
-          m = json.loads((root / 'manifest.json').read_text())
-          if len(m.get('successful_providers', [])) < 2:
-              raise SystemExit(f"need >=2 successful primary providers: {m}")
-          if int(m.get('successful_assignments', 0)) < 6:
-              raise SystemExit(f"need >=6 successful primary assignments: {m}")
-          if int(m.get('population_size', 0)) <= 24 or not (root / 'winner.json').exists():
-              raise SystemExit(f"primary swarm did not add a qualified population: {m}")
-          print(json.dumps(m, indent=2))
-          PY
-
-      - name: Rescue critical gameplay roles
-        continue-on-error: true
-        run: |
-          game-engine swarm-ideate "$BRIEF" \
-            --providers studio.nvidia.rescue.json \
-            --out "$RUN_ROOT/swarm-rescue" \
-            --seed "$((STUDIO_SEED + 1009))" \
-            --seeds 12 \
-            --per-call 2 \
-            --workers 4
-
-      - name: Select joint finalist population
-        run: |
-          args=(
-            "$BRIEF"
-            --source "primary=$RUN_ROOT/swarm-primary/leaderboard.json"
-            --out "$RUN_ROOT/champion"
-            --top 8
-          )
-          if [ -f "$RUN_ROOT/swarm-rescue/leaderboard.json" ]; then
-            args+=(--source "rescue=$RUN_ROOT/swarm-rescue/leaderboard.json")
-          fi
-          game-engine select-concept "${args[@]}"
-
-      - name: Prototype race A
-        continue-on-error: true
-        run: |
-          game-engine swarm-build "$RUN_ROOT/champion/winner.json" \
-            --providers studio.nvidia.build.json \
-            --out "$RUN_ROOT/builds-a" \
-            --workers 2
-
-      - name: Prototype race B
-        continue-on-error: true
-        run: |
-          game-engine swarm-build "$RUN_ROOT/champion/winner.json" \
-            --providers studio.nvidia.build.json \
-            --out "$RUN_ROOT/builds-b" \
-            --workers 2
-
-      - name: Qualify implementation field
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous')
-          good, failures = [], []
-          for race in ('a', 'b'):
-              path = root / f'builds-{race}' / 'builds.json'
-              if not path.exists():
-                  failures.append(f'builds-{race}: missing builds.json')
-                  continue
-              rows = json.loads(path.read_text())
-              good.extend((race, row) for row in rows if row.get('ok'))
-              failures.extend(f"{race}/{row.get('provider')}: {row.get('error')}" for row in rows if not row.get('ok'))
-          if not good:
-              raise SystemExit(f'no byte-qualified implementation survived: {failures}')
-          print('byte-qualified field:', [(race, row['provider'], row['compressed_bytes']) for race, row in good])
-          if len(good) < 2:
-              print('::warning::Only one implementation survived; the field is not yet competitive.')
-          PY
-
       - name: Install browser engines
         run: python -m playwright install --with-deps chromium firefox webkit
 
-      - name: Browser Reality Lab race A
-        continue-on-error: true
-        shell: bash
+      - name: Run evidence-gated autonomous tournament
         run: |
-          if [ -f "$RUN_ROOT/builds-a/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-a" --out "$RUN_ROOT/reality-a" --browsers chromium,firefox,webkit --timeout-ms 12000
-          fi
-
-      - name: Browser Reality Lab race B
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -f "$RUN_ROOT/builds-b/builds.json" ]; then
-            game-engine reality-check "$RUN_ROOT/builds-b" --out "$RUN_ROOT/reality-b" --browsers chromium,firefox,webkit --timeout-ms 12000
-          fi
-
-      - name: Qualify cross-browser field
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous')
-          full_pass, matrices, semantic_divergence = [], {}, []
-          for race in ('a', 'b'):
-              path = root / f'reality-{race}' / 'qualification.json'
-              if not path.exists():
-                  continue
-              q = json.loads(path.read_text())
-              matrices[race] = q.get('matrix', {})
-              full_pass.extend((race, build_id) for build_id in q.get('full_pass_build_ids', []))
-              semantic_divergence.extend(
-                  f'{race}:{build_id}' for build_id in q.get('semantic_divergence_build_ids', [])
-              )
-          if not full_pass:
-              raise SystemExit(f'no implementation passed Chromium + Firefox + WebKit: {matrices}')
-          good = []
-          for race in ('a', 'b'):
-              path = root / f'builds-{race}' / 'builds.json'
-              if path.exists():
-                  good.extend(row for row in json.loads(path.read_text()) if row.get('ok'))
-          winner = json.loads((root / 'champion' / 'winner.json').read_text())
-          selection = json.loads((root / 'champion' / 'selection.json').read_text())
-          summary = {
-              'concept': winner['concept']['title'],
-              'concept_id': winner['concept']['concept_id'],
-              'concept_source': selection['source'],
-              'concept_score': selection['score'],
-              'concept_score_scope': selection.get('score_scope'),
-              'prototype_survivors': len(good),
-              'cross_browser_survivors': len(full_pass),
-              'cross_browser_build_ids': [f'{race}:{build}' for race, build in full_pass],
-              'browser_matrices': matrices,
-              'semantic_divergence_build_ids': sorted(set(semantic_divergence)),
-              'smallest_survivor_bytes': min(r['compressed_bytes'] for r in good),
-              'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
-              'browser_reality_lab_passed': True,
-              'competitive_field': len(full_pass) >= 2,
-              'promotion_blocked_until_gameplay_evidence': True,
-          }
-          (root / 'run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-          print(json.dumps(summary, indent=2))
-          PY
-
-      - name: Source-aware gameplay audit race A
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -f "$RUN_ROOT/reality-a/qualification.json" ]; then
-            game-engine source-audit "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-a" \
-              --reality "$RUN_ROOT/reality-a" \
-              --providers studio.nvidia.audit.json \
-              --out "$RUN_ROOT/audit-a" \
-              --workers 4 --min-critics 2
-          fi
-
-      - name: Source-aware gameplay audit race B
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -f "$RUN_ROOT/reality-b/qualification.json" ]; then
-            game-engine source-audit "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-b" \
-              --reality "$RUN_ROOT/reality-b" \
-              --providers studio.nvidia.audit.json \
-              --out "$RUN_ROOT/audit-b" \
-              --workers 4 --min-critics 2
-          fi
-
-      - name: Qualify gameplay-audit evidence
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous')
-          qualified, audit_matrix = [], {}
-          for race in ('a', 'b'):
-              q_path = root / f'reality-{race}' / 'qualification.json'
-              a_path = root / f'audit-{race}' / 'audit-summary.json'
-              if not q_path.exists() or not a_path.exists():
-                  continue
-              allowed = set(json.loads(q_path.read_text()).get('full_pass_build_ids', []))
-              audit = json.loads(a_path.read_text())
-              rows = [row for row in audit.get('ranking', []) if row.get('build_id') in allowed]
-              audit_matrix[race] = rows
-              qualified.extend((race, row) for row in rows if int(row.get('critic_count', 0)) >= 2)
-          if not qualified:
-              raise SystemExit(f'no cross-browser build received two independent gameplay audits: {audit_matrix}')
-          summary_path = root / 'run-summary.json'
-          summary = json.loads(summary_path.read_text())
-          summary['gameplay_audit_evidence'] = True
-          summary['gameplay_audit_matrix'] = audit_matrix
-          summary['gameplay_advance_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'advance']
-          summary['gameplay_repair_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'repair']
-          summary['gameplay_reject_build_ids'] = [f"{race}:{row['build_id']}" for race, row in qualified if row.get('status') == 'reject']
-          summary['promotion_blocked_until_repair_and_playtest_loop'] = True
-          summary.pop('promotion_blocked_until_gameplay_evidence', None)
-          summary_path.write_text(json.dumps(summary, indent=2) + '\n')
-          print(json.dumps(summary, indent=2))
-          PY
-
-      - name: Evidence-guided repair cycle A
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -f "$RUN_ROOT/audit-a/audits.json" ]; then
-            game-engine repair-cycle "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-a" "$RUN_ROOT/audit-a" \
-              --repair-providers studio.nvidia.repair.json \
-              --audit-providers studio.nvidia.audit.json \
-              --out "$RUN_ROOT/repair-cycle-a" \
-              --browsers chromium,firefox,webkit \
-              --timeout-ms 12000 --workers 4 --max-parents 1
-          fi
-
-      - name: Evidence-guided repair cycle B
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -f "$RUN_ROOT/audit-b/audits.json" ]; then
-            game-engine repair-cycle "$RUN_ROOT/champion/winner.json" "$RUN_ROOT/builds-b" "$RUN_ROOT/audit-b" \
-              --repair-providers studio.nvidia.repair.json \
-              --audit-providers studio.nvidia.audit.json \
-              --out "$RUN_ROOT/repair-cycle-b" \
-              --browsers chromium,firefox,webkit \
-              --timeout-ms 12000 --workers 4 --max-parents 1
-          fi
-
-      - name: Qualify repair-cycle evidence
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous')
-          summaries = {}
-          repairable = 0
-          for race in ('a', 'b'):
-              parent_summary = root / f'audit-{race}' / 'audit-summary.json'
-              if parent_summary.exists():
-                  repairable += len(json.loads(parent_summary.read_text()).get('repair_build_ids', []))
-              cycle_path = root / f'repair-cycle-{race}' / 'cycle-summary.json'
-              if cycle_path.exists():
-                  summaries[race] = json.loads(cycle_path.read_text())
-          if repairable and not summaries:
-              raise SystemExit('repairable parents existed but no repair-cycle evidence was produced')
-          failed = {race: row for race, row in summaries.items() if row.get('status') not in {'complete', 'no_repair_candidates'}}
-          if failed:
-              raise SystemExit(f'repair-cycle infrastructure/evidence failure: {failed}')
-          improving = [f"{race}:{build_id}" for race, row in summaries.items() for build_id in row.get('evidence_improving_children', [])]
-          summary_path = root / 'run-summary.json'
-          summary = json.loads(summary_path.read_text())
-          summary['repairable_parent_count'] = repairable
-          summary['repair_cycle_evidence'] = summaries
-          summary['evidence_improving_children'] = improving
-          summary['lineage_improved_this_run'] = bool(improving)
-          summary['promotion_blocked_until_agentic_and_player_facing_playtests'] = True
-          summary.pop('promotion_blocked_until_repair_and_playtest_loop', None)
-          summary_path.write_text(json.dumps(summary, indent=2) + '\n')
-          print(json.dumps(summary, indent=2))
-          PY
+          game-engine autonomous-tournament "$BRIEF" \
+            --out "$RUN_ROOT" \
+            --seed "$STUDIO_SEED" \
+            --primary-providers studio.nvidia.json \
+            --rescue-providers studio.nvidia.rescue.json \
+            --build-providers studio.nvidia.build.json \
+            --audit-providers studio.nvidia.audit.json \
+            --repair-providers studio.nvidia.repair.json \
+            --browsers chromium,firefox,webkit
 
       - name: Write Actions summary
         if: always()
@@ -367,14 +91,28 @@ jobs:
           echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Seed: \`${STUDIO_SEED}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Brief: \`${BRIEF}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUN_ROOT/stage-journal.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Stage journal" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUN_ROOT/stage-journal.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$RUN_ROOT/run-summary.json" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Qualified run summary" >> "$GITHUB_STEP_SUMMARY"
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
             cat "$RUN_ROOT/run-summary.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$RUN_ROOT/failure.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Fail-closed evidence" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUN_ROOT/failure.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Bad gameplay and failed mutations are evidence, not infrastructure failures. Final promotion remains blocked until agentic/player-facing playtests exist." >> "$GITHUB_STEP_SUMMARY"
+          echo "Final promotion remains blocked until behavioral and player-facing evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()
