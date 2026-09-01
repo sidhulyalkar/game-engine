@@ -1,0 +1,12 @@
+{
+  "case": "canvas-only",
+  "purpose": "Prove player-caused canvas pixels are detected even when DOM text is static and idle pixels do not move.",
+  "expected": {
+    "instrumented": true,
+    "mechanically_observable": true,
+    "null_visible_change_fraction": 0.0,
+    "independent_visual_response": true,
+    "active_core_mechanic_activations_min": 1,
+    "violations": []
+  }
+}
