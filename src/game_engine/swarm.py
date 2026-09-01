@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 
@@ -75,6 +76,11 @@ def _roles_for_brief(brief: Brief) -> list[AgentRole]:
     return roles
 
 
+def _complete_limited(semaphore: threading.Semaphore, client: LLMClient, system: str, prompt: str) -> str:
+    with semaphore:
+        return client.complete(system, prompt)
+
+
 class SwarmStudio:
     def __init__(self, clients: list[tuple[object, LLMClient]], seed: int = 13, max_workers: int = 8):
         self.clients = clients
@@ -96,13 +102,26 @@ class SwarmStudio:
                 cursor += 3
                 jobs.append((spec, client, role, sample))
 
+        provider_limits: dict[str, threading.Semaphore] = {}
+        for spec, client in self.clients:
+            provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+            limit = max(1, int(getattr(spec, "max_concurrency", 1)))
+            provider_limits[provider_name] = threading.Semaphore(limit)
+
         generated: list[Concept] = []
         contributions: list[SwarmContribution] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            future_map = {
-                pool.submit(client.complete, SYSTEM, inventor_prompt(role, brief, sample, concepts_per_call)): (spec, client, role)
-                for spec, client, role, sample in jobs
-            }
+            future_map = {}
+            for spec, client, role, sample in jobs:
+                provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+                future = pool.submit(
+                    _complete_limited,
+                    provider_limits[provider_name],
+                    client,
+                    SYSTEM,
+                    inventor_prompt(role, brief, sample, concepts_per_call),
+                )
+                future_map[future] = (spec, client, role)
             for future in as_completed(future_map):
                 spec, client, role = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
