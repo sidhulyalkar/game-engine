@@ -5,7 +5,7 @@ import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
 
 from .agents import CATEGORY_SPECIALISTS, STUDIO_ROLES, AgentRole
 from .evaluators import deduplicate, judge
@@ -22,6 +22,7 @@ class SwarmContribution:
     ok: bool
     concept_ids: list[str]
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 def _extract_json(text: str) -> dict:
@@ -38,6 +39,10 @@ def _extract_json(text: str) -> dict:
         raise
 
 
+def _word_count(value: object) -> int:
+    return len(str(value).split())
+
+
 def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Concept:
     required = [
         "title", "hook", "core_mechanic", "player_goal", "controls", "core_loop",
@@ -46,6 +51,21 @@ def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Con
     missing = [key for key in required if key not in item]
     if missing:
         raise ValueError(f"concept missing fields: {', '.join(missing)}")
+
+    # Tiny games benefit from strong concepts, not design-doc sprawl. The brief asks
+    # for a one-sentence mechanic; a 150-word core is usually several games hiding
+    # under one title and is unlikely to survive a 13KB implementation intact.
+    if _word_count(item["hook"]) > 60:
+        raise ValueError("hook exceeds 60 words")
+    if _word_count(item["core_mechanic"]) > 120:
+        raise ValueError("core_mechanic exceeds 120 words; split the idea into a smaller game")
+    if _word_count(item["controls"]) > 60:
+        raise ValueError("controls exceed 60 words")
+    if not isinstance(item["core_loop"], list) or not 2 <= len(item["core_loop"]) <= 7:
+        raise ValueError("core_loop must contain 2-7 steps")
+    if not isinstance(item["escalation"], list) or not 1 <= len(item["escalation"]) <= 7:
+        raise ValueError("escalation must contain 1-7 steps")
+
     raw_id = f"{provider}:{role}:{index}:{item['title']}:{item['core_mechanic']}".encode()
     cid = hashlib.sha1(raw_id).hexdigest()[:8]
     return Concept(
@@ -122,17 +142,35 @@ class SwarmStudio:
                     inventor_prompt(role, brief, sample, concepts_per_call),
                 )
                 future_map[future] = (spec, client, role)
+
             for future in as_completed(future_map):
                 spec, client, role = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
                 try:
                     payload = _extract_json(future.result())
                     items = payload.get("concepts", [])
-                    concepts = [_concept_from_model(item, provider_name, role.name, i) for i, item in enumerate(items)]
+                    if not isinstance(items, list):
+                        raise ValueError("concepts must be a list")
+                    concepts: list[Concept] = []
+                    warnings: list[str] = []
+                    for i, item in enumerate(items):
+                        try:
+                            if not isinstance(item, dict):
+                                raise ValueError("concept must be an object")
+                            concepts.append(_concept_from_model(item, provider_name, role.name, i))
+                        except Exception as exc:
+                            warnings.append(f"concept[{i}] rejected: {type(exc).__name__}: {exc}")
+                    if not concepts:
+                        detail = "; ".join(warnings) if warnings else "provider returned no concepts"
+                        raise ValueError(detail)
                     generated.extend(concepts)
-                    contributions.append(SwarmContribution(provider_name, role.name, True, [c.concept_id for c in concepts]))
+                    contributions.append(
+                        SwarmContribution(provider_name, role.name, True, [c.concept_id for c in concepts], warnings=warnings)
+                    )
                 except Exception as exc:
-                    contributions.append(SwarmContribution(provider_name, role.name, False, [], f"{type(exc).__name__}: {exc}"))
+                    contributions.append(
+                        SwarmContribution(provider_name, role.name, False, [], f"{type(exc).__name__}: {exc}")
+                    )
 
         population = deduplicate(seeds + generated, threshold=0.84)
         scorecards = [judge(c, brief, population) for c in population]
@@ -156,6 +194,7 @@ class SwarmStudio:
             "successful_providers": successful_providers,
             "successful_assignments": len(successful),
             "failed_assignments": sum(not c.ok for c in contributions),
+            "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
             "population_size": len(concepts),
             "winner_id": concepts[0].concept_id if concepts else None,
         }
@@ -176,6 +215,7 @@ class SwarmStudio:
                     "successful_providers": successful_providers,
                     "successful_assignments": len(successful),
                     "failed_assignments": sum(not c.ok for c in contributions),
+                    "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
                 },
             }, indent=2) + "\n")
         return payload
