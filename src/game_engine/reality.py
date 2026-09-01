@@ -12,6 +12,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterable
 
+from .render_evidence import assess_render_surface, normalize_visible_text
+
 
 @dataclass(slots=True)
 class RealityResult:
@@ -30,6 +32,8 @@ class RealityResult:
     visual_change: bool
     initial_screenshot: str | None
     after_input_screenshot: str | None
+    initial_text: str | None = None
+    after_input_text: str | None = None
     input_trace: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -104,20 +108,32 @@ def summarize_results(results: list[RealityResult], browsers: list[str]) -> dict
     for result in results:
         by_build.setdefault(result.build_id, []).append(result)
     full_pass = []
+    semantic_divergence = []
     matrix = {}
+    initial_text_matrix = {}
     expected = set(browsers)
     for build_id, rows in by_build.items():
         matrix[build_id] = {row.browser: row.ok for row in rows}
+        initial_text_matrix[build_id] = {row.browser: row.initial_text for row in rows}
         passed = {row.browser for row in rows if row.ok}
         if expected and expected.issubset(passed):
             full_pass.append(build_id)
+        normalized = {
+            normalize_visible_text(row.initial_text)
+            for row in rows
+            if normalize_visible_text(row.initial_text)
+        }
+        if len(normalized) > 1:
+            semantic_divergence.append(build_id)
     return {
         "browsers": browsers,
         "builds_tested": len(by_build),
         "browser_checks": len(results),
         "successful_browser_checks": sum(r.ok for r in results),
         "full_pass_build_ids": sorted(full_pass),
+        "semantic_divergence_build_ids": sorted(semantic_divergence),
         "matrix": matrix,
+        "initial_text_matrix": initial_text_matrix,
     }
 
 
@@ -127,25 +143,48 @@ _SNAPSHOT_JS = r"""() => {
     const rect = c.getBoundingClientRect();
     let nonblank = null;
     let unique = null;
+    let paintedPixels = null;
+    let samplePixels = null;
+    let coverage = null;
     try {
-      const ctx = c.getContext('2d');
-      if (ctx && c.width && c.height) {
-        const sx = Math.max(1, Math.floor(c.width / 12));
-        const sy = Math.max(1, Math.floor(c.height / 8));
+      if (c.width && c.height) {
+        // Downsample the complete rendered canvas rather than probing a tiny set
+        // of fixed coordinates. Sparse games can easily miss a coarse grid.
+        const sw = Math.max(8, Math.min(96, c.width));
+        const sh = Math.max(8, Math.min(54, c.height));
+        const sample = document.createElement('canvas');
+        sample.width = sw;
+        sample.height = sh;
+        const sctx = sample.getContext('2d', {willReadFrequently:true});
+        sctx.drawImage(c, 0, 0, sw, sh);
+        const data = sctx.getImageData(0, 0, sw, sh).data;
         const colors = new Set();
-        let energy = 0;
-        for (let y = Math.floor(sy / 2); y < c.height; y += sy) {
-          for (let x = Math.floor(sx / 2); x < c.width; x += sx) {
-            const d = ctx.getImageData(x, y, 1, 1).data;
-            energy += d[0] + d[1] + d[2] + d[3];
-            colors.add(`${d[0]},${d[1]},${d[2]},${d[3]}`);
-          }
+        let painted = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const a = data[i + 3];
+          if (a > 4) painted++;
+          if (colors.size < 512) colors.add(`${data[i]},${data[i+1]},${data[i+2]},${a}`);
         }
+        samplePixels = sw * sh;
+        paintedPixels = painted;
+        coverage = samplePixels ? painted / samplePixels : 0;
         unique = colors.size;
-        nonblank = energy > 0 && colors.size > 1;
+        // Browser Reality is a technical rendering gate. Any painted pixels
+        // prove the canvas is alive; visual quality belongs to later critics.
+        nonblank = painted > 0;
       }
     } catch (_) {}
-    return {width:c.width,height:c.height,rectWidth:rect.width,rectHeight:rect.height,nonblank,unique};
+    return {
+      width:c.width,
+      height:c.height,
+      rectWidth:rect.width,
+      rectHeight:rect.height,
+      nonblank,
+      unique,
+      paintedPixels,
+      samplePixels,
+      coverage,
+    };
   });
   const body = document.body?.getBoundingClientRect();
   return {
@@ -208,6 +247,7 @@ class BrowserRealityLab:
         warnings: list[str] = []
         input_trace: list[str] = []
         initial_path = after_path = None
+        initial_text = after_input_text = None
         startup_ms = reload_ms = frame_median = frame_p95 = None
         body_width = body_height = None
         canvas_count = 0
@@ -225,6 +265,7 @@ class BrowserRealityLab:
             page.wait_for_timeout(500)
             startup_ms = (time.perf_counter() - started) * 1000
             snapshot_before = page.evaluate(_SNAPSHOT_JS)
+            initial_text = str(snapshot_before.get("text") or "")
             body_width = int(snapshot_before.get("bodyWidth") or 0)
             body_height = int(snapshot_before.get("bodyHeight") or 0)
             canvas_count = len(snapshot_before.get("canvasInfo") or [])
@@ -249,6 +290,7 @@ class BrowserRealityLab:
                 input_trace.append(f"key:{key}")
             page.wait_for_timeout(700)
             snapshot_after = page.evaluate(_SNAPSHOT_JS)
+            after_input_text = str(snapshot_after.get("text") or "")
             canvas_nonblank = canvas_nonblank or any(info.get("nonblank") is True for info in snapshot_after.get("canvasInfo") or [])
             after_bytes = page.screenshot(path=str(after_file), full_page=True)
             after_path = str(after_file)
@@ -261,10 +303,15 @@ class BrowserRealityLab:
             reload_ms = (time.perf_counter() - reload_started) * 1000
             if body_width < 100 or body_height < 100:
                 errors.append(f"render surface too small: {body_width}x{body_height}")
-            if canvas_count and not canvas_nonblank:
-                errors.append("canvas appears blank across sampled pixels")
-            if not canvas_count and not snapshot_after.get("text"):
-                errors.append("no canvas and no visible text detected")
+            surface_errors, surface_warnings = assess_render_surface(
+                canvas_count=canvas_count,
+                canvas_nonblank=canvas_nonblank,
+                visual_change=visual_change,
+                initial_text=initial_text,
+                after_text=after_input_text,
+            )
+            errors.extend(surface_errors)
+            warnings.extend(surface_warnings)
             if not visual_change:
                 warnings.append("deterministic input/animation window produced no screenshot change")
             if startup_ms > 8000:
@@ -286,4 +333,25 @@ class BrowserRealityLab:
                     browser.close()
                 except Exception:
                     pass
-        return RealityResult(build_id=build["build_id"], provider=build.get("provider", "unknown"), browser=browser_name, ok=not errors, startup_ms=round(startup_ms, 2) if startup_ms is not None else None, reload_ms=round(reload_ms, 2) if reload_ms is not None else None, frame_median_ms=round(frame_median, 3) if frame_median is not None else None, frame_p95_ms=round(frame_p95, 3) if frame_p95 is not None else None, body_width=body_width, body_height=body_height, canvas_count=canvas_count, canvas_nonblank=canvas_nonblank, visual_change=visual_change, initial_screenshot=initial_path, after_input_screenshot=after_path, input_trace=input_trace, errors=errors, warnings=warnings)
+        return RealityResult(
+            build_id=build["build_id"],
+            provider=build.get("provider", "unknown"),
+            browser=browser_name,
+            ok=not errors,
+            startup_ms=round(startup_ms, 2) if startup_ms is not None else None,
+            reload_ms=round(reload_ms, 2) if reload_ms is not None else None,
+            frame_median_ms=round(frame_median, 3) if frame_median is not None else None,
+            frame_p95_ms=round(frame_p95, 3) if frame_p95 is not None else None,
+            body_width=body_width,
+            body_height=body_height,
+            canvas_count=canvas_count,
+            canvas_nonblank=canvas_nonblank,
+            visual_change=visual_change,
+            initial_screenshot=initial_path,
+            after_input_screenshot=after_path,
+            initial_text=initial_text,
+            after_input_text=after_input_text,
+            input_trace=input_trace,
+            errors=errors,
+            warnings=warnings,
+        )
