@@ -13,6 +13,7 @@ from .idea_space import procedural_concepts
 from .prompts import SYSTEM, inventor_prompt
 from .providers.base import LLMClient
 from .schema import Brief, Concept, ScoreCard
+from .version import ENGINE_VERSION
 
 
 @dataclass(slots=True)
@@ -52,8 +53,6 @@ def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Con
     if missing:
         raise ValueError(f"concept missing fields: {', '.join(missing)}")
 
-    # Tiny games benefit from strong concepts, not design-doc sprawl. The brief asks
-    # for a compact core; larger systems belong in later evidence-backed mutations.
     if _word_count(item["hook"]) > 60:
         raise ValueError("hook exceeds 60 words")
     if _word_count(item["core_mechanic"]) > 90:
@@ -185,7 +184,7 @@ class SwarmStudio:
         successful = [c for c in contributions if c.ok]
         successful_providers = sorted({c.provider for c in successful})
         payload = {
-            "engine_version": "0.2.0",
+            "engine_version": ENGINE_VERSION,
             "mode": "multi-model-swarm",
             "seed": self.seed,
             "brief": brief.to_dict(),
