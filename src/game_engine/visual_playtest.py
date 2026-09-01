@@ -3,14 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .playtest import (
     GameplayEvidenceLab,
     PolicyTrace,
-    TELEMETRY_SCHEMA_VERSION,
     TelemetrySample,
     _TELEMETRY_JS,
     _load_game_spec,
@@ -25,9 +23,9 @@ from .reality import discover_builds, serve_directory
 
 # Independent player-facing evidence. The telemetry API is authored by the generated
 # game and must therefore never be the only evidence that an action changed play.
-# We downsample each canvas to a tiny scratch surface and compute an FNV-style pixel
-# signature. Cross-origin/tainted canvases remain readable=false instead of crashing
-# the evidence run.
+# Each canvas is downsampled to a tiny scratch surface and hashed. Cross-origin or
+# otherwise unreadable canvases are represented in the visual payload rather than
+# crashing the evidence run.
 _CANVAS_VISIBLE_STATE_JS = r"""() => {
   const canvases = [...document.querySelectorAll('canvas')].map((c, index) => {
     const row = {index, width:c.width, height:c.height, readable:false, pixel_signature:null};
@@ -78,12 +76,12 @@ def _change_fraction(trace: PolicyTrace) -> float:
 def augment_visual_evidence(summary: dict[str, Any], traces: list[PolicyTrace], browsers: list[str]) -> dict[str, Any]:
     by_key = {(trace.build_id, trace.browser, trace.policy): trace for trace in traces}
     independent_ids: list[str] = []
-    unreadable_ids: list[str] = []
+    independently_observable_ids: list[str] = []
+    contradiction_ids: list[str] = []
 
     for build in summary.get("builds", []):
         build_id = str(build.get("build_id"))
-        all_browsers_independent = True
-        any_unreadable = False
+        all_browsers_independent = bool(browsers)
         for browser in browsers:
             null = by_key.get((build_id, browser, "null"))
             sweep = by_key.get((build_id, browser, "sweep"))
@@ -92,9 +90,9 @@ def augment_visual_evidence(summary: dict[str, Any], traces: list[PolicyTrace], 
                 continue
             null_fraction = _change_fraction(null)
             sweep_fraction = _change_fraction(sweep)
-            # A 5 percentage-point margin prevents ordinary idle animation from being
-            # mistaken for action-caused visual response. This is a calibration
-            # heuristic, not yet a promotion-grade threshold.
+            # A five percentage-point margin prevents ordinary idle animation from
+            # being mistaken for player-caused visual response. This threshold is a
+            # calibration hypothesis, not a final fun/promotion score.
             independent = sweep_fraction > null_fraction + 0.05
             matrix = build["policies"].setdefault(browser, {})
             matrix.setdefault("null", {})["visible_change_fraction"] = null_fraction
@@ -107,25 +105,24 @@ def augment_visual_evidence(summary: dict[str, Any], traces: list[PolicyTrace], 
                     f"({sweep_fraction:.3f} vs {null_fraction:.3f})"
                 )
 
-            readable_samples = 0
-            for trace in (null, sweep):
-                # The visible hash still includes DOM/title even if a canvas was
-                # unreadable. Presence of pixel signatures is inferred from the probe
-                # payload indirectly by re-reading once below in _sample metadata.
-                readable_samples += sum(bool(getattr(sample, "visible_hash", "")) for sample in trace.samples)
-            if readable_samples == 0:
-                any_unreadable = True
-
+        telemetry_observable = bool(build.get("mechanically_observable"))
+        independently_observable = telemetry_observable and all_browsers_independent
+        contradiction = telemetry_observable and not all_browsers_independent
         build["independent_visual_response"] = all_browsers_independent
+        build["independently_observable"] = independently_observable
+        build["telemetry_visual_contradiction"] = contradiction
         build["warnings"] = sorted(set(build.get("warnings", [])))
         if all_browsers_independent:
             independent_ids.append(build_id)
-        if any_unreadable:
-            unreadable_ids.append(build_id)
+        if independently_observable:
+            independently_observable_ids.append(build_id)
+        if contradiction:
+            contradiction_ids.append(build_id)
 
     summary["visual_probe"] = "canvas-downsample-fnv-v1"
     summary["independent_visual_response_build_ids"] = sorted(independent_ids)
-    summary["canvas_unreadable_build_ids"] = sorted(unreadable_ids)
+    summary["independently_observable_build_ids"] = sorted(independently_observable_ids)
+    summary["telemetry_visual_contradiction_build_ids"] = sorted(contradiction_ids)
     return summary
 
 
