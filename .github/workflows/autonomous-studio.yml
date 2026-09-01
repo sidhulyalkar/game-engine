@@ -126,41 +126,18 @@ jobs:
             --per-call 2 \
             --workers 4
 
-      - name: Select evidence-leading concept
+      - name: Select joint finalist population
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous')
-          candidates = []
-          for name in ('swarm-primary', 'swarm-rescue'):
-              winner_path = root / name / 'winner.json'
-              manifest_path = root / name / 'manifest.json'
-              if not winner_path.exists() or not manifest_path.exists():
-                  continue
-              winner = json.loads(winner_path.read_text())
-              manifest = json.loads(manifest_path.read_text())
-              if name == 'swarm-rescue' and int(manifest.get('successful_assignments', 0)) < 2:
-                  continue
-              candidates.append((float(winner['scorecard']['total']), name, winner, manifest))
-          if not candidates:
-              raise SystemExit('no qualified concept source survived')
-          candidates.sort(reverse=True, key=lambda row: row[0])
-          score, source, winner, manifest = candidates[0]
-          champion = root / 'champion'
-          champion.mkdir(parents=True, exist_ok=True)
-          (champion / 'winner.json').write_text(json.dumps(winner, indent=2) + '\n')
-          selection = {
-              'source': source,
-              'score': score,
-              'concept_id': winner['concept']['concept_id'],
-              'title': winner['concept']['title'],
-              'candidate_scores': {name: value for value, name, _, _ in candidates},
-              'successful_providers': manifest.get('successful_providers', []),
-          }
-          (champion / 'selection.json').write_text(json.dumps(selection, indent=2) + '\n')
-          print(json.dumps(selection, indent=2))
-          PY
+          args=(
+            "$BRIEF"
+            --source "primary=$RUN_ROOT/swarm-primary/leaderboard.json"
+            --out "$RUN_ROOT/champion"
+            --top 8
+          )
+          if [ -f "$RUN_ROOT/swarm-rescue/leaderboard.json" ]; then
+            args+=(--source "rescue=$RUN_ROOT/swarm-rescue/leaderboard.json")
+          fi
+          game-engine select-concept "${args[@]}"
 
       - name: Prototype race A
         continue-on-error: true
@@ -225,7 +202,7 @@ jobs:
           import json
           from pathlib import Path
           root = Path('runs/autonomous')
-          full_pass, matrices = [], {}
+          full_pass, matrices, semantic_divergence = [], {}, []
           for race in ('a', 'b'):
               path = root / f'reality-{race}' / 'qualification.json'
               if not path.exists():
@@ -233,6 +210,9 @@ jobs:
               q = json.loads(path.read_text())
               matrices[race] = q.get('matrix', {})
               full_pass.extend((race, build_id) for build_id in q.get('full_pass_build_ids', []))
+              semantic_divergence.extend(
+                  f'{race}:{build_id}' for build_id in q.get('semantic_divergence_build_ids', [])
+              )
           if not full_pass:
               raise SystemExit(f'no implementation passed Chromium + Firefox + WebKit: {matrices}')
           good = []
@@ -247,10 +227,12 @@ jobs:
               'concept_id': winner['concept']['concept_id'],
               'concept_source': selection['source'],
               'concept_score': selection['score'],
+              'concept_score_scope': selection.get('score_scope'),
               'prototype_survivors': len(good),
               'cross_browser_survivors': len(full_pass),
               'cross_browser_build_ids': [f'{race}:{build}' for race, build in full_pass],
               'browser_matrices': matrices,
+              'semantic_divergence_build_ids': sorted(set(semantic_divergence)),
               'smallest_survivor_bytes': min(r['compressed_bytes'] for r in good),
               'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
               'browser_reality_lab_passed': True,
