@@ -1,6 +1,15 @@
+import json
+from dataclasses import asdict
+
 from game_engine.config import ProviderSpec
 from game_engine.schema import Brief
-from game_engine.swarm_health import assess_combined_health, assess_primary_health, build_rescue_config
+from game_engine.swarm_health import (
+    assess_combined_health,
+    assess_primary_health,
+    build_rescue_config,
+    write_combined_health,
+    write_primary_health_plan,
+)
 
 
 def spec(name, model, roles):
@@ -102,3 +111,76 @@ def test_two_models_and_critical_coverage_qualify_combined_swarm():
     assert health["qualified"] is True
     assert health["missing_roles"] == []
     assert health["successful_models"] == ["kimi-model", "nemotron-model"]
+
+
+def _write_specs(path, specs):
+    path.write_text(json.dumps({"providers": [asdict(row) for row in specs]}))
+
+
+def test_live_failure_shape_writes_targeted_rescue_and_can_finalize(tmp_path):
+    brief = Brief(theme="Unicorns and Rainbows", primary_category="desktop", expansion_categories=["online", "webxr"])
+    primary_specs = [
+        spec("nvidia-nemotron-super", "nemotron-model", ["wild_inventor", "byte_architect", "adversarial_designer"]),
+        spec("nvidia-deepseek-v4-pro", "deepseek-model", ["gameplay_director", "competition_judge", "desktop_specialist"]),
+        spec("nvidia-kimi-k3", "kimi-model", ["visual_director", "audio_director", "onboarding_critic"]),
+    ]
+    rescue_specs = [
+        spec("nvidia-nemotron-rescue", "nemotron-model", ["gameplay_director", "competition_judge"]),
+        spec("nvidia-kimi-rescue", "kimi-model", ["online_specialist", "desktop_specialist"]),
+    ]
+    primary_contributions = [
+        {"provider": "nvidia-nemotron-super", "role": "wild_inventor", "ok": True},
+        {"provider": "nvidia-nemotron-super", "role": "byte_architect", "ok": True},
+        {"provider": "nvidia-nemotron-super", "role": "adversarial_designer", "ok": True},
+        {"provider": "nvidia-deepseek-v4-pro", "role": "gameplay_director", "ok": False, "error": "RuntimeError: TimeoutError"},
+        {"provider": "nvidia-deepseek-v4-pro", "role": "competition_judge", "ok": False, "error": "RuntimeError: TimeoutError"},
+        {"provider": "nvidia-deepseek-v4-pro", "role": "desktop_specialist", "ok": False, "error": "RuntimeError: TimeoutError"},
+        {"provider": "nvidia-kimi-k3", "role": "visual_director", "ok": False, "error": "ValueError: core_mechanic exceeds 90 words"},
+        {"provider": "nvidia-kimi-k3", "role": "audio_director", "ok": False, "error": "RuntimeError: TimeoutError"},
+        {"provider": "nvidia-kimi-k3", "role": "onboarding_critic", "ok": False, "error": "ValueError: core_mechanic exceeds 90 words"},
+    ]
+
+    manifest_path = tmp_path / "manifest.json"
+    contribution_path = tmp_path / "contributions.json"
+    primary_config_path = tmp_path / "primary.json"
+    rescue_config_path = tmp_path / "rescue.json"
+    health_dir = tmp_path / "health"
+    manifest_path.write_text(json.dumps({"population_size": 32, "winner_id": "a441a247"}))
+    contribution_path.write_text(json.dumps(primary_contributions))
+    _write_specs(primary_config_path, primary_specs)
+    _write_specs(rescue_config_path, rescue_specs)
+
+    primary_health = write_primary_health_plan(
+        brief,
+        manifest_path,
+        contribution_path,
+        primary_config_path,
+        rescue_config_path,
+        health_dir,
+        deterministic_seed_count=24,
+    )
+    assert primary_health["status"] == "degraded"
+    assert primary_health["failure_classes"] == {"content_or_schema": 2, "timeout": 4}
+    generated = json.loads((health_dir / "rescue.generated.json").read_text())
+    generated_by_name = {row["name"]: row for row in generated["providers"]}
+    assert generated_by_name["nvidia-nemotron-rescue"]["roles"] == ["gameplay_director", "competition_judge"]
+    assert generated_by_name["nvidia-kimi-rescue"]["roles"] == ["desktop_specialist"]
+
+    rescue_contribution_path = tmp_path / "rescue-contributions.json"
+    rescue_contribution_path.write_text(json.dumps([
+        {"provider": "nvidia-nemotron-rescue", "role": "gameplay_director", "ok": True},
+        {"provider": "nvidia-nemotron-rescue", "role": "competition_judge", "ok": True},
+        {"provider": "nvidia-kimi-rescue", "role": "desktop_specialist", "ok": True},
+    ]))
+    final = write_combined_health(
+        brief,
+        contribution_path,
+        primary_config_path,
+        health_dir,
+        rescue_contributions_path=rescue_contribution_path,
+        rescue_specs_path=health_dir / "rescue.generated.json",
+    )
+    assert final["qualified"] is True
+    assert final["successful_models"] == ["kimi-model", "nemotron-model"]
+    assert final["missing_roles"] == []
+    assert final["rescue_used"] is True
