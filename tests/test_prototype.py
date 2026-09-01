@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 import zipfile
 
-from game_engine.prototype import PrototypeForge, _extract_html_response
+from game_engine.game_spec import compile_game_spec
+from game_engine.prototype import PrototypeForge, _extract_html_response, builder_prompt
 from game_engine.schema import Brief, Concept
 
 
@@ -15,6 +16,7 @@ class FakeBuilder:
 
     def complete(self, system: str, prompt: str) -> str:
         assert "Output HTML only" in prompt
+        assert "__GAME_ENGINE_TELEMETRY__" in prompt
         return '<!doctype html><html><body><canvas id=c></canvas><p>WASD + SPACE</p><script>c.width=320;c.height=180</script></body></html>'
 
 
@@ -25,6 +27,15 @@ def _concept():
         escalation=["faster"], visual_grammar="trails", audio_grammar="bleeps",
         category_fit=["desktop"], byte_hypothesis="canvas", risks=[], tags=[]
     )
+
+
+def test_builder_prompt_contains_literal_event_shape_and_telemetry_contract():
+    brief = Brief(theme="Unicorns and Rainbows")
+    spec = compile_game_spec(brief, _concept())
+    _, prompt = builder_prompt(brief, spec)
+    assert "each event is `{type, at_ms}`" in prompt
+    assert "window.__GAME_ENGINE_TELEMETRY__" in prompt
+    assert "core_mechanic_activations" in prompt
 
 
 def test_extract_html_accepts_raw_fenced_and_legacy_json():
@@ -52,6 +63,7 @@ def test_prototype_forge_writes_and_packages_only_game_files(tmp_path):
     assert row.response_format == "raw-html"
     assert row.raw_response_path
     assert row.game_spec_path
+    assert any("telemetry" in warning.lower() for warning in row.warnings)
     assert (tmp_path / "builds.json").exists()
     assert (tmp_path / "game-spec.json").exists()
 
