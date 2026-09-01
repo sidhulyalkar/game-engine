@@ -1,0 +1,13 @@
+{
+  "case": "telemetry-liar",
+  "purpose": "Prove internally claimed progress does not count as independent player-visible response.",
+  "expected": {
+    "instrumented": true,
+    "mechanically_observable": true,
+    "independent_visual_response": false,
+    "null_visible_change_fraction": 0.0,
+    "sweep_visible_change_fraction": 0.0,
+    "active_core_mechanic_activations_min": 1,
+    "violations": []
+  }
+}
