@@ -11,6 +11,7 @@
       "max_tokens": 4096,
       "timeout": 180,
       "retries": 1,
+      "max_concurrency": 1,
       "enabled": true
     },
     {
@@ -24,6 +25,7 @@
       "max_tokens": 4096,
       "timeout": 180,
       "retries": 1,
+      "max_concurrency": 1,
       "enabled": true
     }
   ]
