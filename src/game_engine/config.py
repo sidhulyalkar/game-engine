@@ -20,11 +20,15 @@ class ProviderSpec:
     max_tokens: int = 8192
     timeout: int = 180
     retries: int = 3
+    max_concurrency: int = 1
     extra_body: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict) -> "ProviderSpec":
-        return cls(**value)
+        spec = cls(**value)
+        if spec.max_concurrency < 1:
+            raise ValueError(f"Provider {spec.name} max_concurrency must be >= 1")
+        return spec
 
 
 def load_provider_specs(path: Path) -> list[ProviderSpec]:
