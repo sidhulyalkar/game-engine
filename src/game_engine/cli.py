@@ -7,6 +7,7 @@ from pathlib import Path
 from .orchestrator import Studio
 from .config import build_clients, load_provider_specs
 from .swarm import SwarmStudio
+from .swarm_health import write_combined_health, write_primary_health_plan
 from .packaging import package_game
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
@@ -17,15 +18,19 @@ from .selection import write_joint_selection
 from .schema import Brief, Concept
 
 
+def _brief(path: str) -> Brief:
+    return Brief.from_dict(json.loads(Path(path).read_text()))
+
+
 def cmd_ideate(args: argparse.Namespace) -> int:
-    brief = Brief.from_dict(json.loads(Path(args.brief).read_text()))
+    brief = _brief(args.brief)
     manifest = Studio(seed=args.seed).run(brief, Path(args.out), count=args.concepts)
     print(json.dumps(manifest, indent=2))
     return 0
 
 
 def cmd_swarm_ideate(args: argparse.Namespace) -> int:
-    brief = Brief.from_dict(json.loads(Path(args.brief).read_text()))
+    brief = _brief(args.brief)
     specs = load_provider_specs(Path(args.providers))
     clients = build_clients(specs)
     manifest = SwarmStudio(clients, seed=args.seed, max_workers=args.workers).run(
@@ -35,8 +40,41 @@ def cmd_swarm_ideate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan_swarm_health(args: argparse.Namespace) -> int:
+    health = write_primary_health_plan(
+        _brief(args.brief),
+        Path(args.manifest),
+        Path(args.contributions),
+        Path(args.primary_providers),
+        Path(args.rescue_providers),
+        Path(args.out),
+        deterministic_seed_count=args.deterministic_seeds,
+    )
+    print(json.dumps(health, indent=2))
+    if not health["usable"]:
+        return 2
+    if health["rescue_required"] and not health["rescue_plannable"]:
+        return 2
+    return 0
+
+
+def cmd_finalize_swarm_health(args: argparse.Namespace) -> int:
+    rescue_contributions = Path(args.rescue_contributions) if args.rescue_contributions else None
+    rescue_providers = Path(args.rescue_providers) if args.rescue_providers else None
+    health = write_combined_health(
+        _brief(args.brief),
+        Path(args.primary_contributions),
+        Path(args.primary_providers),
+        Path(args.out),
+        rescue_contributions_path=rescue_contributions,
+        rescue_specs_path=rescue_providers,
+    )
+    print(json.dumps(health, indent=2))
+    return 0 if health["qualified"] else 2
+
+
 def cmd_select_concept(args: argparse.Namespace) -> int:
-    brief = Brief.from_dict(json.loads(Path(args.brief).read_text()))
+    brief = _brief(args.brief)
     sources: dict[str, Path] = {}
     for value in args.source:
         if "=" not in value:
@@ -157,6 +195,25 @@ def build_parser() -> argparse.ArgumentParser:
     swarm.add_argument("--per-call", type=int, default=3)
     swarm.add_argument("--workers", type=int, default=8)
     swarm.set_defaults(func=cmd_swarm_ideate)
+
+    health_plan = sub.add_parser("plan-swarm-health", help="classify primary swarm health and write a targeted rescue provider config")
+    health_plan.add_argument("brief")
+    health_plan.add_argument("manifest")
+    health_plan.add_argument("contributions")
+    health_plan.add_argument("--primary-providers", default="studio.nvidia.json")
+    health_plan.add_argument("--rescue-providers", default="studio.nvidia.rescue.json")
+    health_plan.add_argument("--out", default="runs/swarm-health")
+    health_plan.add_argument("--deterministic-seeds", type=int, default=24)
+    health_plan.set_defaults(func=cmd_plan_swarm_health)
+
+    health_final = sub.add_parser("finalize-swarm-health", help="require final cross-model and critical-role evidence after optional rescue")
+    health_final.add_argument("brief")
+    health_final.add_argument("primary_contributions")
+    health_final.add_argument("--primary-providers", default="studio.nvidia.json")
+    health_final.add_argument("--rescue-contributions", default=None)
+    health_final.add_argument("--rescue-providers", default=None)
+    health_final.add_argument("--out", default="runs/swarm-health")
+    health_final.set_defaults(func=cmd_finalize_swarm_health)
 
     select = sub.add_parser("select-concept", help="rejudge finalists from independent swarms in one shared population")
     select.add_argument("brief")
