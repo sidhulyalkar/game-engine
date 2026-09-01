@@ -1,0 +1,12 @@
+{
+  "case_id": "telemetry-good",
+  "kind": "synthetic-known-good",
+  "provenance": "hand-authored Phase B contract fixture",
+  "expected": {
+    "instrumented": true,
+    "mechanically_observable": true,
+    "null_progress_delta": 0,
+    "active_core_mechanic_activations_min": 1,
+    "violations": []
+  }
+}
