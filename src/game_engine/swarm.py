@@ -53,12 +53,11 @@ def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Con
         raise ValueError(f"concept missing fields: {', '.join(missing)}")
 
     # Tiny games benefit from strong concepts, not design-doc sprawl. The brief asks
-    # for a one-sentence mechanic; a 150-word core is usually several games hiding
-    # under one title and is unlikely to survive a 13KB implementation intact.
+    # for a compact core; larger systems belong in later evidence-backed mutations.
     if _word_count(item["hook"]) > 60:
         raise ValueError("hook exceeds 60 words")
-    if _word_count(item["core_mechanic"]) > 120:
-        raise ValueError("core_mechanic exceeds 120 words; split the idea into a smaller game")
+    if _word_count(item["core_mechanic"]) > 90:
+        raise ValueError("core_mechanic exceeds 90 words; split the idea into a smaller game")
     if _word_count(item["controls"]) > 60:
         raise ValueError("controls exceed 60 words")
     if not isinstance(item["core_loop"], list) or not 2 <= len(item["core_loop"]) <= 7:
@@ -89,7 +88,7 @@ def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Con
 
 def _roles_for_brief(brief: Brief) -> list[AgentRole]:
     roles = list(STUDIO_ROLES[:-1])
-    for category in brief.target_categories:
+    for category in brief.active_categories:
         specialist = CATEGORY_SPECIALISTS.get(category.lower())
         if specialist:
             roles.append(specialist)
@@ -186,10 +185,11 @@ class SwarmStudio:
         successful = [c for c in contributions if c.ok]
         successful_providers = sorted({c.provider for c in successful})
         payload = {
-            "engine_version": "0.1.0",
+            "engine_version": "0.2.0",
             "mode": "multi-model-swarm",
             "seed": self.seed,
             "brief": brief.to_dict(),
+            "active_categories": brief.active_categories,
             "providers": sorted({c.provider for c in contributions}),
             "successful_providers": successful_providers,
             "successful_assignments": len(successful),
@@ -212,6 +212,7 @@ class SwarmStudio:
                 "scorecard": score_map[winner.concept_id].to_dict(),
                 "swarm": {
                     "seed": self.seed,
+                    "active_categories": brief.active_categories,
                     "successful_providers": successful_providers,
                     "successful_assignments": len(successful),
                     "failed_assignments": sum(not c.ok for c in contributions),
