@@ -1,0 +1,12 @@
+[
+  {
+    "provider": "fixture",
+    "build_id": "telemetry-good",
+    "ok": true,
+    "source_dir": "game",
+    "zip_path": null,
+    "compressed_bytes": 0,
+    "byte_headroom": 13312,
+    "warnings": []
+  }
+]
