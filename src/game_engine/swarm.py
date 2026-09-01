@@ -126,13 +126,16 @@ class SwarmStudio:
         output_dir.mkdir(parents=True, exist_ok=True)
         concepts, scores, contributions = self.ideate(brief, deterministic_seeds, concepts_per_call)
         score_map = {s.concept_id: s for s in scores}
+        successful = [c for c in contributions if c.ok]
+        successful_providers = sorted({c.provider for c in successful})
         payload = {
             "engine_version": "0.1.0",
             "mode": "multi-model-swarm",
             "seed": self.seed,
             "brief": brief.to_dict(),
             "providers": sorted({c.provider for c in contributions}),
-            "successful_assignments": sum(c.ok for c in contributions),
+            "successful_providers": successful_providers,
+            "successful_assignments": len(successful),
             "failed_assignments": sum(not c.ok for c in contributions),
             "population_size": len(concepts),
             "winner_id": concepts[0].concept_id if concepts else None,
@@ -143,4 +146,17 @@ class SwarmStudio:
             {"rank": i + 1, "concept": c.to_dict(), "scorecard": score_map[c.concept_id].to_dict()}
             for i, c in enumerate(concepts)
         ], indent=2) + "\n")
+        if concepts:
+            winner = concepts[0]
+            (output_dir / "winner.json").write_text(json.dumps({
+                "brief": brief.to_dict(),
+                "concept": winner.to_dict(),
+                "scorecard": score_map[winner.concept_id].to_dict(),
+                "swarm": {
+                    "seed": self.seed,
+                    "successful_providers": successful_providers,
+                    "successful_assignments": len(successful),
+                    "failed_assignments": sum(not c.ok for c in contributions),
+                },
+            }, indent=2) + "\n")
         return payload
