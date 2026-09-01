@@ -12,7 +12,7 @@ from .orchestrator import Studio
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
 from .repair_cycle import run_repair_cycle
-from .schema import Brief
+from .schema import Brief, Concept
 from .selection import write_joint_selection
 from .source_audit import SourceGameplayLab
 from .swarm import SwarmStudio
@@ -57,8 +57,10 @@ class StageJournal:
             print(json.dumps(details, indent=2, default=str))
 
     def _write(self) -> None:
-        payload = {"seed": self.seed, "stages": self.rows}
-        (self.root / "stage-journal.json").write_text(json.dumps(payload, indent=2, default=str) + "\n")
+        (self.root / "stage-journal.json").write_text(json.dumps({
+            "seed": self.seed,
+            "stages": self.rows,
+        }, indent=2, default=str) + "\n")
 
     def fail(self, stage: str, message: str) -> None:
         self.record(stage, "failed", message=message)
@@ -174,8 +176,7 @@ def run_autonomous_tournament(
             expansion_categories=brief.expansion_categories,
         )
 
-        deterministic_dir = paths.child("deterministic")
-        deterministic = Studio(seed=seed).run(brief, deterministic_dir, count=32)
+        deterministic = Studio(seed=seed).run(brief, paths.child("deterministic"), count=32)
         journal.record("deterministic-exploration", "passed", population_size=deterministic["population_size"])
 
         primary_specs = load_provider_specs(primary_providers)
@@ -256,21 +257,22 @@ def run_autonomous_tournament(
             score_scope=selection.get("score_scope"),
         )
 
+        winner_payload = json.loads((paths.child("champion") / "winner.json").read_text())
+        concept = Concept.from_dict(winner_payload["concept"])
         builder_specs = load_provider_specs(build_providers)
         builder_clients = build_clients(builder_specs)
-        build_races: dict[str, list[dict[str, Any]]] = {}
         for race in ("a", "b"):
             results = PrototypeForge(builder_clients, max_workers=2).build(
                 brief,
-                Brief.from_dict(json.loads((paths.child("champion") / "winner.json").read_text())["brief"]) and __import__("game_engine.schema", fromlist=["Concept"]).Concept.from_dict(json.loads((paths.child("champion") / "winner.json").read_text())["concept"]),
+                concept,
                 paths.child(f"builds-{race}"),
             )
-            build_races[race] = [_result_payload(result) for result in results]
+            payload = [_result_payload(result) for result in results]
             journal.record(
                 f"prototype-race-{race}",
                 "completed",
-                survivors=sum(bool(row.get("ok")) for row in build_races[race]),
-                failures=[row.get("error") for row in build_races[race] if not row.get("ok")],
+                survivors=sum(bool(row.get("ok")) for row in payload),
+                failures=[row.get("error") for row in payload if not row.get("ok")],
             )
 
         good, build_failures = _good_builds(paths)
@@ -306,12 +308,11 @@ def run_autonomous_tournament(
             raise TournamentFailure("cross-browser-field", f"no implementation passed all browsers: {matrices}")
         journal.record("cross-browser-field", "passed", survivors=[f"{race}:{build}" for race, build in full_pass])
 
-        winner = json.loads((paths.child("champion") / "winner.json").read_text())
         selection_payload = json.loads((paths.child("champion") / "selection.json").read_text())
         good_rows = [row for _, row in good]
         run_summary: dict[str, Any] = {
-            "concept": winner["concept"]["title"],
-            "concept_id": winner["concept"]["concept_id"],
+            "concept": concept.title,
+            "concept_id": concept.concept_id,
             "concept_source": selection_payload["source"],
             "concept_score": selection_payload["score"],
             "concept_score_scope": selection_payload.get("score_scope"),
@@ -341,7 +342,7 @@ def run_autonomous_tournament(
             try:
                 audit = SourceGameplayLab(audit_clients, max_workers=4).run(
                     brief,
-                    __import__("game_engine.schema", fromlist=["Concept"]).Concept.from_dict(winner["concept"]),
+                    concept,
                     paths.child(f"builds-{race}"),
                     paths.child(f"audit-{race}"),
                     paths.child(f"reality-{race}"),
