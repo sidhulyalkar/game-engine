@@ -12,6 +12,7 @@ from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
 from .source_audit import SourceGameplayLab
 from .repair import RepairForge
+from .repair_cycle import run_repair_cycle
 from .schema import Brief, Concept
 
 
@@ -93,6 +94,24 @@ def cmd_repair(args: argparse.Namespace) -> int:
     return 0 if not results or any(r.ok for r in results) else 2
 
 
+def cmd_repair_cycle(args: argparse.Namespace) -> int:
+    browsers = [part.strip() for part in args.browsers.split(",") if part.strip()]
+    summary = run_repair_cycle(
+        Path(args.winner),
+        Path(args.builds),
+        Path(args.audits),
+        Path(args.repair_providers),
+        Path(args.audit_providers),
+        Path(args.out),
+        browsers=browsers,
+        max_parents=args.max_parents,
+        workers=args.workers,
+        timeout_ms=args.timeout_ms,
+    )
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["status"] in {"complete", "no_repair_candidates"} else 2
+
+
 def cmd_pack(args: argparse.Namespace) -> int:
     report = package_game(Path(args.source), Path(args.zip), limit_bytes=args.limit)
     print(f"{report.compressed_bytes}/{report.limit_bytes} bytes ({'PASS' if report.ok else 'FAIL'})")
@@ -157,6 +176,19 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--workers", type=int, default=4)
     repair.add_argument("--max-parents", type=int, default=1)
     repair.set_defaults(func=cmd_repair)
+
+    cycle = sub.add_parser("repair-cycle", help="repair one lineage and re-run byte, browser, critic, and parent/child evidence gates")
+    cycle.add_argument("winner")
+    cycle.add_argument("builds")
+    cycle.add_argument("audits")
+    cycle.add_argument("--repair-providers", default="studio.nvidia.repair.json")
+    cycle.add_argument("--audit-providers", default="studio.nvidia.audit.json")
+    cycle.add_argument("--out", default="runs/repair-cycle-latest")
+    cycle.add_argument("--browsers", default="chromium,firefox,webkit")
+    cycle.add_argument("--timeout-ms", type=int, default=12_000)
+    cycle.add_argument("--workers", type=int, default=4)
+    cycle.add_argument("--max-parents", type=int, default=1)
+    cycle.set_defaults(func=cmd_repair_cycle)
 
     pack = sub.add_parser("pack", help="zip a game and enforce the compressed byte budget")
     pack.add_argument("source")
