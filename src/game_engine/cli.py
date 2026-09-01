@@ -10,6 +10,7 @@ from .swarm import SwarmStudio
 from .packaging import package_game
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
+from .playtest import GameplayEvidenceLab
 from .source_audit import SourceGameplayLab
 from .repair import RepairForge
 from .repair_cycle import run_repair_cycle
@@ -74,6 +75,27 @@ def cmd_reality(args: argparse.Namespace) -> int:
     ).run(Path(args.builds), Path(args.out))
     print(json.dumps(summary, indent=2))
     return 0 if summary["full_pass_build_ids"] else 2
+
+
+def cmd_playtest(args: argparse.Namespace) -> int:
+    browsers = [part.strip() for part in args.browsers.split(",") if part.strip()]
+    if not browsers:
+        raise ValueError("at least one browser is required")
+    summary = GameplayEvidenceLab(
+        browsers=browsers,
+        timeout_ms=args.timeout_ms,
+        viewport_width=args.width,
+        viewport_height=args.height,
+        sample_interval_ms=args.sample_interval_ms,
+    ).run(
+        Path(args.builds),
+        Path(args.out),
+        Path(args.reality) if args.reality else None,
+    )
+    print(json.dumps(summary, indent=2))
+    # Evidence acquisition is the infrastructure gate. Mechanical-observability
+    # findings remain evidence until thresholds are calibrated on the corpus.
+    return 0 if summary["instrumented_build_ids"] else 2
 
 
 def cmd_source_audit(args: argparse.Namespace) -> int:
@@ -180,6 +202,17 @@ def build_parser() -> argparse.ArgumentParser:
     reality.add_argument("--width", type=int, default=1280)
     reality.add_argument("--height", type=int, default=720)
     reality.set_defaults(func=cmd_reality)
+
+    playtest = sub.add_parser("playtest", help="run telemetry-backed null and deterministic control policies in real browsers")
+    playtest.add_argument("builds", help="prototype forge output directory containing builds.json and game-spec.json")
+    playtest.add_argument("--reality", default=None, help="optional Browser Reality output; only full-pass build IDs are tested")
+    playtest.add_argument("--out", default="runs/playtest-latest")
+    playtest.add_argument("--browsers", default="chromium")
+    playtest.add_argument("--timeout-ms", type=int, default=10_000)
+    playtest.add_argument("--width", type=int, default=1280)
+    playtest.add_argument("--height", type=int, default=720)
+    playtest.add_argument("--sample-interval-ms", type=int, default=250)
+    playtest.set_defaults(func=cmd_playtest)
 
     audit = sub.add_parser("source-audit", help="have independent gameplay critics inspect source plus browser evidence")
     audit.add_argument("winner", help="champion winner.json defining the intended concept")
