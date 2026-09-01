@@ -1,0 +1,79 @@
+name: Gameplay Evidence CI
+
+on:
+  push:
+    branches:
+      - agent/v0.3-gameplay-evidence
+    paths:
+      - '.github/workflows/gameplay-evidence-ci.yml'
+      - 'src/game_engine/playtest.py'
+      - 'src/game_engine/prototype.py'
+      - 'src/game_engine/cli.py'
+      - 'tests/game_corpus/**'
+      - 'tests/test_playtest.py'
+      - 'tests/test_prototype.py'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'src/game_engine/playtest.py'
+      - 'src/game_engine/prototype.py'
+      - 'src/game_engine/cli.py'
+      - 'tests/game_corpus/**'
+      - 'tests/test_playtest.py'
+      - 'tests/test_prototype.py'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gameplay-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install evidence lab
+        run: python -m pip install -e '.[reality]' pytest
+
+      - name: Unit contracts
+        run: pytest -q
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run known-good gameplay evidence fixture
+        run: |
+          game-engine playtest tests/game_corpus/telemetry-good \
+            --out /tmp/gameplay-evidence \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Qualify fixture expectations
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = json.loads(Path('tests/game_corpus/telemetry-good/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/gameplay-evidence/playtest-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'telemetry-good')
+          sweep = build['policies']['chromium']['sweep']
+          null = build['policies']['chromium']['null']
+
+          assert build['instrumented'] is expected['instrumented'], build
+          assert build['mechanically_observable'] is expected['mechanically_observable'], build
+          assert build['violations'] == expected['violations'], build
+          assert (null['progress_delta'] or 0) == expected['null_progress_delta'], null
+          assert (sweep['core_mechanic_activations'] or 0) >= expected['active_core_mechanic_activations_min'], sweep
+          assert sweep['visible_change'] is True, sweep
+          print(json.dumps(summary, indent=2))
+          PY
