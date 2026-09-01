@@ -19,10 +19,13 @@
 - Cost/token/latency ledger per discovery.
 - Blind first-round proposals and controlled cross-pollination.
 
-## M2 — Autonomous prototype forge
+## M2 — Autonomous prototype forge (started)
 
-- LLM emits `GameSpec`, then HTML/JS implementation patches.
-- Hermetic build directory per lineage node.
+Already landed in v0.1: multi-provider `winner.json -> standalone index.html` prototype races, isolated build directories, ZIP creation, byte-limit enforcement, and build ledgers.
+
+Next:
+- Split concept selection from a richer `GameSpec` contract.
+- Add implementation patch rounds instead of one-shot generation.
 - Minify + ZIP + byte accounting after every mutation.
 - Git worktree/branch per contender.
 - Automatic rollback when a mutation worsens evidence.
