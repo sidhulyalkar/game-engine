@@ -13,6 +13,7 @@ from .reality import BrowserRealityLab
 from .source_audit import SourceGameplayLab
 from .repair import RepairForge
 from .repair_cycle import run_repair_cycle
+from .selection import write_joint_selection
 from .schema import Brief, Concept
 
 
@@ -31,6 +32,22 @@ def cmd_swarm_ideate(args: argparse.Namespace) -> int:
         brief, Path(args.out), deterministic_seeds=args.seeds, concepts_per_call=args.per_call
     )
     print(json.dumps(manifest, indent=2))
+    return 0
+
+
+def cmd_select_concept(args: argparse.Namespace) -> int:
+    brief = Brief.from_dict(json.loads(Path(args.brief).read_text()))
+    sources: dict[str, Path] = {}
+    for value in args.source:
+        if "=" not in value:
+            raise ValueError(f"source must be NAME=LEADERBOARD_PATH, got {value!r}")
+        name, path = value.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise ValueError("source name cannot be empty")
+        sources[name] = Path(path.strip())
+    summary = write_joint_selection(brief, sources, Path(args.out), top_k_per_source=args.top)
+    print(json.dumps(summary, indent=2))
     return 0
 
 
@@ -140,6 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
     swarm.add_argument("--per-call", type=int, default=3)
     swarm.add_argument("--workers", type=int, default=8)
     swarm.set_defaults(func=cmd_swarm_ideate)
+
+    select = sub.add_parser("select-concept", help="rejudge finalists from independent swarms in one shared population")
+    select.add_argument("brief")
+    select.add_argument("--source", action="append", required=True, help="NAME=leaderboard.json; repeat for each swarm")
+    select.add_argument("--out", default="runs/champion")
+    select.add_argument("--top", type=int, default=8, help="top candidates to import from each source")
+    select.set_defaults(func=cmd_select_concept)
 
     build = sub.add_parser("swarm-build", help="turn a winning concept into competing runnable model prototypes")
     build.add_argument("winner")
