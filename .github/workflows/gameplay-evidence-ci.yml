@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/gameplay-evidence-ci.yml'
       - 'src/game_engine/playtest.py'
+      - 'src/game_engine/visual_playtest.py'
       - 'src/game_engine/prototype.py'
       - 'src/game_engine/cli.py'
       - 'tests/game_corpus/**'
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - 'src/game_engine/playtest.py'
+      - 'src/game_engine/visual_playtest.py'
       - 'src/game_engine/prototype.py'
       - 'src/game_engine/cli.py'
       - 'tests/game_corpus/**'
@@ -50,14 +52,14 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
 
-      - name: Run known-good gameplay evidence fixture
+      - name: Run known-good telemetry fixture
         run: |
           game-engine playtest tests/game_corpus/telemetry-good \
             --out /tmp/gameplay-evidence \
             --browsers chromium \
             --sample-interval-ms 120
 
-      - name: Qualify fixture expectations
+      - name: Qualify telemetry fixture expectations
         run: |
           python - <<'PY'
           import json
@@ -75,5 +77,34 @@ jobs:
           assert (null['progress_delta'] or 0) == expected['null_progress_delta'], null
           assert (sweep['core_mechanic_activations'] or 0) >= expected['active_core_mechanic_activations_min'], sweep
           assert sweep['visible_change'] is True, sweep
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Run canvas-only causal visual fixture
+        run: |
+          python -m game_engine.visual_playtest tests/game_corpus/canvas-only \
+            --out /tmp/canvas-evidence \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Qualify independent canvas evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = json.loads(Path('tests/game_corpus/canvas-only/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/canvas-evidence/playtest-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'canvas-only')
+          null = build['policies']['chromium']['null']
+          sweep = build['policies']['chromium']['sweep']
+
+          assert build['instrumented'] is expected['instrumented'], build
+          assert build['mechanically_observable'] is expected['mechanically_observable'], build
+          assert build['violations'] == expected['violations'], build
+          assert null['visible_change_fraction'] == expected['null_visible_change_fraction'], null
+          assert sweep['independent_visual_response'] is expected['independent_visual_response'], sweep
+          assert (sweep['core_mechanic_activations'] or 0) >= expected['active_core_mechanic_activations_min'], sweep
+          assert 'canvas-only' in summary['independent_visual_response_build_ids'], summary
           print(json.dumps(summary, indent=2))
           PY
