@@ -32,7 +32,18 @@ class PrototypeResult:
 
 def builder_prompt(brief: Brief, spec: GameSpec) -> tuple[str, str]:
     system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied GameSpec. Correctness, game feel, and readability come before code golf. Return ONLY the complete standalone HTML document. Do not return JSON, markdown fences, explanations, or design notes."""
-    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n\nOutput HTML only."""
+    telemetry_shape = {
+        "schema_version": "0.1",
+        "snapshot": "function returning snapshot object",
+        "events": "function returning recent event objects",
+        "snapshot_fields": [
+            "elapsed_ms", "tick", "state", "alive", "game_over", "score", "progress",
+            "restart_count", "entity_count", "action_count", "last_action_ms",
+            "core_mechanic_activations", "progression_transitions", "state_hash",
+        ],
+        "event_shape": {"type": "event name", "at_ms": "elapsed game milliseconds"},
+    }
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nDEVELOPMENT TELEMETRY CONTRACT:\n{json.dumps(telemetry_shape, indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n\nTelemetry is REQUIRED in this development prototype:\n- expose `window.__GAME_ENGINE_TELEMETRY__` with `schema_version: '0.1'`, `snapshot()` and `events()`\n- `snapshot()` returns every listed snapshot field; use null only when a field truly has no value\n- `state` uses `playing`, `dead`, or `won`; `progress` is normalized 0..1\n- `entity_count` counts active gameplay entities/particles/trails that can grow over time\n- `action_count` increments only when a player input is accepted by gameplay; `last_action_ms` records that elapsed game time\n- `core_mechanic_activations` increments when the defining GameSpec interaction actually occurs, not on every key press\n- `progression_transitions` increments when difficulty/rule progression changes\n- `state_hash` is a compact deterministic string derived from meaningful gameplay state; DO NOT include wall-clock/elapsed time alone\n- keep a bounded event log (max 256 recent events) containing at least `run_start`, `action_accepted`, `progress_change`, `damage_or_death`, `restart`, `core_mechanic_activation`, and `progression_transition` when those events occur\n- each event is `{type, at_ms}`; telemetry must not alter gameplay when read\n- this telemetry is evidence instrumentation, not player-facing UI\n\nOutput HTML only."""
     return system, user
 
 
@@ -137,6 +148,7 @@ class PrototypeForge:
                         "game_spec": str(spec_path),
                         "raw_response": str(raw_path),
                         "response_format": response_format,
+                        "telemetry_schema": "0.1",
                     }, indent=2) + "\n")
 
                     zip_path = output_dir / "dist" / f"{_safe_name(provider)}-{build_id}.zip"
@@ -144,6 +156,8 @@ class PrototypeForge:
                     warnings = list(report.warnings)
                     if "<canvas" not in html.lower():
                         warnings.append("No canvas element detected; verify rendering strategy intentionally.")
+                    if "__GAME_ENGINE_TELEMETRY__" not in html:
+                        warnings.append("Development telemetry API marker not detected; Gameplay Evidence Lab will reject instrumentation.")
                     results.append(PrototypeResult(
                         provider=provider,
                         build_id=build_id,
