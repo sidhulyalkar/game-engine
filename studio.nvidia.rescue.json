@@ -1,0 +1,30 @@
+{
+  "providers": [
+    {
+      "name": "nvidia-nemotron-rescue",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "roles": ["gameplay_director", "competition_judge"],
+      "temperature": 0.85,
+      "top_p": 0.95,
+      "max_tokens": 4096,
+      "timeout": 180,
+      "retries": 1,
+      "enabled": true
+    },
+    {
+      "name": "nvidia-kimi-rescue",
+      "model": "moonshotai/kimi-k3",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "roles": ["online_specialist", "desktop_specialist"],
+      "temperature": 0.85,
+      "top_p": 0.95,
+      "max_tokens": 4096,
+      "timeout": 180,
+      "retries": 1,
+      "enabled": true
+    }
+  ]
+}

@@ -27,12 +27,12 @@ class PrototypeResult:
 
 
 def builder_prompt(brief: Brief, concept: Concept) -> tuple[str, str]:
-    system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied mechanic. Prefer procedural Canvas/WebAudio and shared state over assets. Do not add features that dilute the core interaction. Return JSON only."""
+    system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied mechanic. Prefer procedural Canvas/WebAudio and shared state over assets. Correctness, game feel, and readability come before minification. Return JSON only."""
     schema = {
         "index_html": "complete standalone HTML document as a string",
         "design_notes": ["short note"],
     }
-    user = f"""BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nCHAMPION CONCEPT:\n{json.dumps(concept.to_dict(), indent=2)}\n\nBuild a runnable single-file prototype. Requirements:\n- top-level index.html, no build step\n- no remote images/fonts/audio/scripts\n- Canvas 2D and WebAudio are preferred\n- keyboard controls must be stated on screen in very little text\n- gameplay must begin immediately or with one obvious click/key\n- fast restart\n- preserve the one-sentence core mechanic\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes; this is a prototype, not a last-byte code-golf pass\n\nReturn exactly this JSON shape, no markdown fences:\n{json.dumps(schema, indent=2)}"""
+    user = f"""BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nCHAMPION CONCEPT:\n{json.dumps(concept.to_dict(), indent=2)}\n\nBuild a runnable single-file prototype. Requirements:\n- top-level index.html, no build step\n- no remote images/fonts/audio/scripts\n- Canvas 2D and WebAudio are preferred\n- controls must be stated on screen in very little text\n- gameplay must begin immediately or with one obvious click/key\n- fast restart\n- preserve the one-sentence core mechanic rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; do not use plain circles as unicorns unless abstraction is an intentional mechanic\n- movement rates are in pixels/second (or analogous units) and MUST be multiplied by delta-time correctly\n- all spawned entities, particles, trails, timers, and audio nodes must have bounded lifetimes or bounded storage\n- use clear variable names and correct object/property comparisons in the prototype; code-golf happens only after gameplay qualification\n- verify collision, scoring, game-over, and restart logic against the actual variable types you create\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes; this is a prototype, not a last-byte compression pass\n\nReturn exactly this JSON shape, no markdown fences:\n{json.dumps(schema, indent=2)}"""
     return system, user
 
 

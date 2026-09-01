@@ -19,7 +19,7 @@ on:
       - agent/v0.1-swarm-foundry
     paths:
       - '.github/workflows/autonomous-studio.yml'
-      - 'studio.nvidia.json'
+      - 'studio.nvidia*.json'
       - 'examples/briefs/**'
       - 'src/game_engine/**'
       - 'tests/**'
@@ -59,14 +59,18 @@ jobs:
             exit 2
           fi
           test -f "$BRIEF"
-          test -f studio.nvidia.json
+          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json; do test -f "$cfg"; done
           python - <<'PY'
           from pathlib import Path
           from game_engine.config import load_provider_specs
-          specs = load_provider_specs(Path('studio.nvidia.json'))
-          assert len(specs) >= 3, 'autonomous roster must contain at least three enabled providers'
-          assert len({s.model for s in specs}) >= 3, 'autonomous roster must be model-diverse'
-          print('configured models:', ', '.join(s.model for s in specs))
+          primary = load_provider_specs(Path('studio.nvidia.json'))
+          rescue = load_provider_specs(Path('studio.nvidia.rescue.json'))
+          builders = load_provider_specs(Path('studio.nvidia.build.json'))
+          assert len(primary) >= 3 and len({s.model for s in primary}) >= 3
+          assert len(rescue) >= 2 and len(builders) >= 2
+          print('primary:', ', '.join(s.model for s in primary))
+          print('rescue:', ', '.join(s.model for s in rescue))
+          print('builders:', ', '.join(s.model for s in builders))
           PY
 
       - name: Unit and contract tests
@@ -75,95 +79,176 @@ jobs:
       - name: Deterministic exploration baseline
         run: |
           mkdir -p "$RUN_ROOT"
-          game-engine ideate "$BRIEF" \
-            --out "$RUN_ROOT/deterministic" \
-            --seed "$STUDIO_SEED" \
-            --concepts 32
+          game-engine ideate "$BRIEF" --out "$RUN_ROOT/deterministic" --seed "$STUDIO_SEED" --concepts 32
 
-      - name: NVIDIA heterogeneous swarm ideation
+      - name: Primary heterogeneous swarm
         run: |
           game-engine swarm-ideate "$BRIEF" \
             --providers studio.nvidia.json \
-            --out "$RUN_ROOT/swarm" \
+            --out "$RUN_ROOT/swarm-primary" \
             --seed "$STUDIO_SEED" \
             --seeds 24 \
             --per-call 3 \
             --workers 6
 
-      - name: Qualify swarm health
+      - name: Qualify primary swarm
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          root = Path('runs/autonomous/swarm')
-          manifest = json.loads((root / 'manifest.json').read_text())
-          providers = manifest.get('successful_providers', [])
-          successes = int(manifest.get('successful_assignments', 0))
-          population = int(manifest.get('population_size', 0))
-          if len(providers) < 2:
-              raise SystemExit(f'need >=2 successful model providers, got {providers}')
-          if successes < 6:
-              raise SystemExit(f'need >=6 successful specialist assignments, got {successes}')
-          if population <= 24:
-              raise SystemExit(f'LLM swarm added no qualified concepts; population={population}')
-          if not (root / 'winner.json').exists():
-              raise SystemExit('winner.json missing')
-          print(f'swarm qualified: providers={len(providers)} assignments={successes} population={population}')
+          root = Path('runs/autonomous/swarm-primary')
+          m = json.loads((root / 'manifest.json').read_text())
+          if len(m.get('successful_providers', [])) < 2:
+              raise SystemExit(f"need >=2 successful primary providers: {m}")
+          if int(m.get('successful_assignments', 0)) < 6:
+              raise SystemExit(f"need >=6 successful primary assignments: {m}")
+          if int(m.get('population_size', 0)) <= 24 or not (root / 'winner.json').exists():
+              raise SystemExit(f"primary swarm did not add a qualified population: {m}")
+          print(json.dumps(m, indent=2))
           PY
 
-      - name: Multi-model prototype race
+      - name: Rescue swarm for critical gameplay roles
+        continue-on-error: true
         run: |
-          game-engine swarm-build "$RUN_ROOT/swarm/winner.json" \
-            --providers studio.nvidia.json \
-            --out "$RUN_ROOT/builds" \
-            --workers 3
+          game-engine swarm-ideate "$BRIEF" \
+            --providers studio.nvidia.rescue.json \
+            --out "$RUN_ROOT/swarm-rescue" \
+            --seed "$((STUDIO_SEED + 1009))" \
+            --seeds 12 \
+            --per-call 2 \
+            --workers 4
 
-      - name: Qualify prototype race
+      - name: Select evidence-leading concept
         run: |
           python - <<'PY'
-          import json
+          import json, shutil
           from pathlib import Path
-          results = json.loads(Path('runs/autonomous/builds/builds.json').read_text())
-          good = [r for r in results if r.get('ok')]
-          if not good:
-              errors = [r.get('error') for r in results]
-              raise SystemExit(f'no runnable byte-qualified prototype survived: {errors}')
-          print('byte-qualified prototypes:', [(r['provider'], r['compressed_bytes']) for r in good])
+          root = Path('runs/autonomous')
+          candidates = []
+          for name in ('swarm-primary', 'swarm-rescue'):
+              path = root / name / 'winner.json'
+              manifest_path = root / name / 'manifest.json'
+              if not path.exists() or not manifest_path.exists():
+                  continue
+              winner = json.loads(path.read_text())
+              manifest = json.loads(manifest_path.read_text())
+              if name == 'swarm-rescue' and int(manifest.get('successful_assignments', 0)) < 2:
+                  continue
+              candidates.append((float(winner['scorecard']['total']), name, winner, manifest))
+          if not candidates:
+              raise SystemExit('no qualified concept source survived')
+          candidates.sort(reverse=True, key=lambda row: row[0])
+          score, source, winner, manifest = candidates[0]
+          champion = root / 'champion'
+          champion.mkdir(parents=True, exist_ok=True)
+          (champion / 'winner.json').write_text(json.dumps(winner, indent=2) + '\n')
+          selection = {
+              'source': source,
+              'score': score,
+              'concept_id': winner['concept']['concept_id'],
+              'title': winner['concept']['title'],
+              'candidate_scores': {name: value for value, name, _, _ in candidates},
+              'successful_providers': manifest.get('successful_providers', []),
+          }
+          (champion / 'selection.json').write_text(json.dumps(selection, indent=2) + '\n')
+          print(json.dumps(selection, indent=2))
           PY
 
-      - name: Install browser engines
-        run: python -m playwright install --with-deps chromium firefox webkit
-
-      - name: Browser Reality Lab
+      - name: Prototype race A
+        continue-on-error: true
         run: |
-          game-engine reality-check "$RUN_ROOT/builds" \
-            --out "$RUN_ROOT/reality" \
-            --browsers chromium,firefox,webkit \
-            --timeout-ms 12000
+          game-engine swarm-build "$RUN_ROOT/champion/winner.json" \
+            --providers studio.nvidia.build.json \
+            --out "$RUN_ROOT/builds-a" \
+            --workers 2
 
-      - name: Qualify cross-browser reality and write run summary
+      - name: Prototype race B
+        continue-on-error: true
+        run: |
+          game-engine swarm-build "$RUN_ROOT/champion/winner.json" \
+            --providers studio.nvidia.build.json \
+            --out "$RUN_ROOT/builds-b" \
+            --workers 2
+
+      - name: Qualify implementation field
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           root = Path('runs/autonomous')
-          reality = json.loads((root / 'reality' / 'qualification.json').read_text())
-          full_pass = reality.get('full_pass_build_ids', [])
+          good = []
+          failures = []
+          for name in ('builds-a', 'builds-b'):
+              path = root / name / 'builds.json'
+              if not path.exists():
+                  failures.append(f'{name}: missing builds.json')
+                  continue
+              rows = json.loads(path.read_text())
+              good.extend((name, row) for row in rows if row.get('ok'))
+              failures.extend(f"{name}/{row.get('provider')}: {row.get('error')}" for row in rows if not row.get('ok'))
+          if not good:
+              raise SystemExit(f'no byte-qualified implementation survived: {failures}')
+          print('byte-qualified field:', [(name, row['provider'], row['compressed_bytes']) for name, row in good])
+          if len(good) < 2:
+              print('::warning::Only one implementation survived; Browser Reality Lab will still run but the field is not yet competitive.')
+          PY
+
+      - name: Install browser engines
+        run: python -m playwright install --with-deps chromium firefox webkit
+
+      - name: Browser Reality Lab race A
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/builds-a/builds.json" ]; then
+            game-engine reality-check "$RUN_ROOT/builds-a" --out "$RUN_ROOT/reality-a" --browsers chromium,firefox,webkit --timeout-ms 12000
+          fi
+
+      - name: Browser Reality Lab race B
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f "$RUN_ROOT/builds-b/builds.json" ]; then
+            game-engine reality-check "$RUN_ROOT/builds-b" --out "$RUN_ROOT/reality-b" --browsers chromium,firefox,webkit --timeout-ms 12000
+          fi
+
+      - name: Qualify cross-browser field and write run summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('runs/autonomous')
+          full_pass = []
+          matrices = {}
+          for name in ('a', 'b'):
+              path = root / f'reality-{name}' / 'qualification.json'
+              if not path.exists():
+                  continue
+              q = json.loads(path.read_text())
+              matrices[name] = q.get('matrix', {})
+              full_pass.extend((name, build_id) for build_id in q.get('full_pass_build_ids', []))
           if not full_pass:
-              raise SystemExit(f'no prototype passed all requested browsers: {reality.get("matrix")}')
-          builds = json.loads((root / 'builds' / 'builds.json').read_text())
-          good = [r for r in builds if r.get('ok')]
-          winner = json.loads((root / 'swarm' / 'winner.json').read_text())
+              raise SystemExit(f'no implementation passed Chromium + Firefox + WebKit: {matrices}')
+          good = []
+          for name in ('a', 'b'):
+              path = root / f'builds-{name}' / 'builds.json'
+              if path.exists():
+                  good.extend(row for row in json.loads(path.read_text()) if row.get('ok'))
+          winner = json.loads((root / 'champion' / 'winner.json').read_text())
+          selection = json.loads((root / 'champion' / 'selection.json').read_text())
           summary = {
               'concept': winner['concept']['title'],
               'concept_id': winner['concept']['concept_id'],
+              'concept_source': selection['source'],
+              'concept_score': selection['score'],
               'prototype_survivors': len(good),
               'cross_browser_survivors': len(full_pass),
-              'cross_browser_build_ids': full_pass,
-              'browser_matrix': reality.get('matrix', {}),
+              'cross_browser_build_ids': [f'{race}:{build}' for race, build in full_pass],
+              'browser_matrices': matrices,
               'smallest_survivor_bytes': min(r['compressed_bytes'] for r in good),
               'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
               'browser_reality_lab_passed': True,
+              'competitive_field': len(full_pass) >= 2,
               'promotion_blocked_until_playtest_evidence': True,
           }
           (root / 'run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
@@ -186,7 +271,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Browser Reality Lab is now a technical gate. Final promotion remains blocked until gameplay/playtest evidence exists." >> "$GITHUB_STEP_SUMMARY"
+          echo "Browser Reality Lab is a technical gate. Final promotion remains blocked until gameplay/playtest evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()
