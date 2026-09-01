@@ -6,6 +6,7 @@ from pathlib import Path
 from .evaluators import deduplicate, judge, mechanic_distribution
 from .idea_space import mutate, procedural_concepts
 from .schema import Brief, Concept, ScoreCard
+from .version import ENGINE_VERSION
 
 
 class Studio:
@@ -39,7 +40,7 @@ class Studio:
         score_map = {s.concept_id: s for s in scores}
         winner = concepts[0]
         manifest = {
-            "engine_version": "0.1.0",
+            "engine_version": ENGINE_VERSION,
             "seed": self.seed,
             "brief": brief.to_dict(),
             "population_size": len(concepts),
