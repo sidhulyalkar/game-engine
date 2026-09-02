@@ -1,0 +1,58 @@
+{
+  "brief": {
+    "theme": "Unicorns and Rainbows",
+    "target_categories": ["desktop", "mobile", "online", "webxr"],
+    "primary_category": "desktop",
+    "expansion_categories": ["mobile", "online", "webxr"],
+    "native_hybrid": false,
+    "size_limit_bytes": 13312,
+    "desired_session_seconds": 240,
+    "audience": "js13kGames players and judges who reward novelty, game feel, clarity, and technical elegance",
+    "must_have": [
+      "a mechanic with a one-sentence explanation",
+      "meaningful mastery in the first minute",
+      "procedural graphics",
+      "procedural audio",
+      "fast restart",
+      "offline-first core game"
+    ],
+    "avoid": [
+      "generic survivors clone",
+      "theme as cosmetic skin only",
+      "tutorial walls of text",
+      "more than three primary actions",
+      "large shipped media assets"
+    ],
+    "creative_direction": "cute at first glance, mechanically surprising underneath; prove one excellent desktop interaction first, then branch successful lineages into mobile, online, and WebXR adaptations"
+  },
+  "concept": {
+    "concept_id": "c7104166",
+    "title": "Prism Duet",
+    "hook": "Two mirrored unicorn echoes emit rainbow waves; stand in constructive interference to charge your horn, but the arena shatters where waves cancel.",
+    "core_mechanic": "You steer two mirrored unicorns whose hoofbeats emit circular color waves. Where same-color waves overlap, tiles charge and score; where opposite colors meet, tiles crack and fall away. Your score multiplier is a physical prism shard floating in the arena; enemies can shove it into dead zones, destroying it. Defeat enemies by detonating charged tiles beneath them.",
+    "player_goal": "Survive the duel, protect your prism shard, and clear all enemies before the arena collapses.",
+    "controls": "Mouse moves both echoes symmetrically; left-click detonates charged tiles; right-click flips wave polarity.",
+    "core_loop": [
+      "Position echoes to overlap waves and charge tiles",
+      "Detonate charged tiles to defeat enemies",
+      "Herd enemies away from your prism shard",
+      "Rebuild footing as cracked tiles fall"
+    ],
+    "escalation": [
+      "Enemies begin dragging the prism shard",
+      "Third wave color adds partial-cancellation zones",
+      "Final duel on a fully eroding floor"
+    ],
+    "visual_grammar": "Procedural canvas: interference fringes rendered as additive rainbow gradients over a tile grid; cracks and polarity flips read instantly.",
+    "audio_grammar": "WebAudio oscillators per wave color; constructive zones hum in harmony, dissonance swells as tiles near collapse.",
+    "category_fit": ["desktop"],
+    "byte_hypothesis": "Tile grid + analytic wave superposition + two mirrored agents fits in ~9KB with no assets.",
+    "risks": [
+      "Interference readability may fail at high tile density",
+      "Mirrored dual control may confuse in the first ten seconds",
+      "Shard physics could feel unfair without clear telegraphs"
+    ],
+    "lineage": [],
+    "tags": ["wave interference", "echo", "physics", "one-room duel", "provider:nvidia-kimi-rescue", "role:competition_judge"]
+  }
+}
