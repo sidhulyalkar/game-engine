@@ -1,0 +1,13 @@
+{
+  "expected": {
+    "build_qualified": false,
+    "required_actions": ["pointer", "primary", "secondary"],
+    "failed_action": "secondary",
+    "secondary_binding": "SecondaryPointer",
+    "secondary_accepted": true,
+    "secondary_meaningful_state_change": false,
+    "secondary_independent_visual_change": false,
+    "secondary_no_op_fraction": 1.0,
+    "required_violation": "required advertised binding produced no meaningful gameplay effect"
+  }
+}
