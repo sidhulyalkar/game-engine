@@ -1,4 +1,6 @@
-from game_engine.source_falsification import _timer_counter_cycles, analyze_source
+from pathlib import Path
+
+from game_engine.source_falsification import SourceFalsificationLab, _timer_counter_cycles, analyze_source
 
 
 def run60_spec():
@@ -53,6 +55,24 @@ def test_run60_orbiting_aurora_is_falsified_without_model_judgment():
     report = analyze_source(RUN60_ORBITING_AURORA, run60_spec())
     codes = {row["code"] for row in report["findings"]}
     assert report["qualified"] is False
+    assert {
+        "nondeterministic_rng",
+        "missing_telemetry_contract",
+        "uncapped_accumulator_dt",
+        "restart_loop_not_resumed",
+        "escalation_after_representative_run",
+        "hazard_travel_below_own_radius",
+    }.issubset(codes)
+
+
+def test_exact_run60_cross_browser_survivor_is_permanently_falsified(tmp_path):
+    corpus = Path("tests/game_corpus/run60-orbiting-aurora")
+    result = SourceFalsificationLab().run(corpus, tmp_path / "evidence")
+    assert result["full_pass_build_ids"] == []
+    assert result["blocked_build_ids"] == ["421bf7afca"]
+    row = result["rows"][0]
+    assert row["provider"] == "nvidia-nemotron-builder"
+    codes = {finding["code"] for finding in row["findings"]}
     assert {
         "nondeterministic_rng",
         "missing_telemetry_contract",
