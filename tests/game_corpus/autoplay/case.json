@@ -1,0 +1,13 @@
+{
+  "case": "autoplay",
+  "purpose": "Prove a self-progressing animated game is not credited with independent player agency when active input adds no stronger visible response than the null baseline.",
+  "expected": {
+    "instrumented": true,
+    "mechanically_observable": true,
+    "independent_visual_response": false,
+    "independently_observable": false,
+    "telemetry_visual_contradiction": true,
+    "active_core_mechanic_activations_min": 1,
+    "violations": []
+  }
+}
