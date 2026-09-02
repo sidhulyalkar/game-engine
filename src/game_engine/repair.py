@@ -80,6 +80,12 @@ class RepairForge:
     ) -> list[RepairResult]:
         candidates = load_repair_candidates(builds_root, audits_root, max_parents=max_parents)
         output_dir.mkdir(parents=True, exist_ok=True)
+        # Preserve the authoritative implementation contract throughout the repair
+        # lineage so downstream causal/browser evidence can evaluate the child against
+        # exactly the same controls, restart semantics, timing, and state bounds.
+        game_spec_path = builds_root / "game-spec.json"
+        if game_spec_path.exists():
+            (output_dir / "game-spec.json").write_text(game_spec_path.read_text())
         if not candidates:
             (output_dir / "repairs.json").write_text("[]\n")
             (output_dir / "repair-manifest.json").write_text(json.dumps({"repair_candidates": 0, "successful_children": 0}, indent=2) + "\n")
@@ -164,6 +170,7 @@ class RepairForge:
             "attempted_children": len(results),
             "successful_children": sum(row.ok for row in results),
             "parent_build_ids": sorted({row.parent_build_id for row in results}),
+            "game_spec_preserved": game_spec_path.exists(),
         }
         (output_dir / "repair-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         return results
