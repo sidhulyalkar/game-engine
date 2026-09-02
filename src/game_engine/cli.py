@@ -10,7 +10,7 @@ from .swarm import SwarmStudio
 from .packaging import package_game
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
-from .playtest import GameplayEvidenceLab
+from .structured_playtest import StructuredGameplayEvidenceLab
 from .source_audit import SourceGameplayLab
 from .repair import RepairForge
 from .repair_cycle import run_repair_cycle
@@ -81,7 +81,7 @@ def cmd_playtest(args: argparse.Namespace) -> int:
     browsers = [part.strip() for part in args.browsers.split(",") if part.strip()]
     if not browsers:
         raise ValueError("at least one browser is required")
-    summary = GameplayEvidenceLab(
+    summary = StructuredGameplayEvidenceLab(
         browsers=browsers,
         timeout_ms=args.timeout_ms,
         viewport_width=args.width,
@@ -203,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
     reality.add_argument("--height", type=int, default=720)
     reality.set_defaults(func=cmd_reality)
 
-    playtest = sub.add_parser("playtest", help="run telemetry-backed null and deterministic control policies in real browsers")
+    playtest = sub.add_parser("playtest", help="run telemetry-backed null and GameSpec control policies in real browsers")
     playtest.add_argument("builds", help="prototype forge output directory containing builds.json and game-spec.json")
     playtest.add_argument("--reality", default=None, help="optional Browser Reality output; only full-pass build IDs are tested")
     playtest.add_argument("--out", default="runs/playtest-latest")
