@@ -23,6 +23,10 @@ def _instrumented_html(extra_script: str = "") -> str:
     )
 
 
+def _missing_telemetry_html() -> str:
+    return '<!doctype html><html><body><canvas id=c></canvas><script>let score=0</script></body></html>'
+
+
 class FakeBuilder:
     name = "builder-a"
 
@@ -47,9 +51,11 @@ class SequenceBuilder:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self.prompts = []
 
     def complete(self, system: str, prompt: str) -> str:
         self.calls += 1
+        self.prompts.append(prompt)
         if not self.responses:
             raise AssertionError("unexpected extra builder call")
         return self.responses.pop(0)
@@ -92,6 +98,7 @@ def test_prototype_forge_writes_and_packages_only_game_files(tmp_path):
     assert row.source_falsification_path
     assert row.source_falsification_blockers == 0
     assert row.recovery_attempted is False
+    assert row.contract_repair_attempted is False
     assert (tmp_path / "builds.json").exists()
     assert (tmp_path / "game-spec.json").exists()
 
@@ -99,23 +106,62 @@ def test_prototype_forge_writes_and_packages_only_game_files(tmp_path):
         assert zf.namelist() == ["index.html"]
 
 
-def test_source_contract_blocker_prevents_packaging_and_browser_eligibility(tmp_path):
-    row = PrototypeForge([(FakeSpec("broken"), BrokenContractBuilder())], max_workers=1).build(
+def test_deterministic_contract_blocker_gets_one_surgical_repair_before_packaging(tmp_path):
+    client = SequenceBuilder([_missing_telemetry_html(), _instrumented_html()])
+    row = PrototypeForge([(FakeSpec(), client)], max_workers=1).build(
+        Brief(theme="Unicorns and Rainbows", size_limit_bytes=2048), _concept(), tmp_path
+    )[0]
+
+    assert row.ok is True
+    assert client.calls == 2
+    assert row.contract_repair_attempted is True
+    assert row.contract_repair_parent_build_id
+    assert row.contract_repair_parent_build_id != row.build_id
+    assert row.contract_repair_raw_response_path and "contract-repair" in row.contract_repair_raw_response_path
+    assert row.contract_repair_remaining_blockers == []
+    assert row.source_falsification_blockers == 0
+    assert row.zip_path is not None
+    assert row.response_format == "contract-repaired-raw-html"
+    assert "OBJECTIVE BLOCKERS TO FIX" in client.prompts[1]
+    assert "missing_telemetry_contract" in client.prompts[1]
+    assert any("deterministic contract repair" in warning for warning in row.warnings)
+
+
+def test_source_contract_blocker_fails_closed_after_exactly_one_repair(tmp_path):
+    client = SequenceBuilder([_missing_telemetry_html(), _missing_telemetry_html()])
+    row = PrototypeForge([(FakeSpec("broken"), client)], max_workers=1).build(
         Brief(theme="Unicorns and Rainbows", size_limit_bytes=2048), _concept(), tmp_path
     )[0]
 
     assert row.ok is False
+    assert client.calls == 2
     assert row.build_id != "failed"
     assert row.source_dir is not None
     assert row.raw_response_path is not None
+    assert row.contract_repair_attempted is True
+    assert row.contract_repair_raw_response_path
+    assert row.contract_repair_remaining_blockers == ["missing_telemetry_contract"]
     assert row.source_falsification_path is not None
-    assert row.source_falsification_blockers >= 2
+    assert row.source_falsification_blockers == 1
     assert row.zip_path is None
     assert row.compressed_bytes is None
-    assert "SourceFalsificationError" in row.error
-    assert "nondeterministic_rng" in row.error
-    assert "missing_telemetry_contract" in row.error
+    assert "SourceFalsificationError after bounded contract repair" in row.error
     assert not (tmp_path / "dist").exists()
+
+
+def test_multiple_source_blockers_receive_one_repair_not_retry_spam(tmp_path):
+    bad = '<!doctype html><html><body><canvas id=c></canvas><script>let x=Math.random()</script></body></html>'
+    client = SequenceBuilder([bad, bad])
+    row = PrototypeForge([(FakeSpec("broken"), client)], max_workers=1).build(
+        Brief(theme="Unicorns and Rainbows", size_limit_bytes=2048), _concept(), tmp_path
+    )[0]
+
+    assert row.ok is False
+    assert client.calls == 2
+    assert row.contract_repair_attempted is True
+    assert set(row.contract_repair_remaining_blockers) == {"nondeterministic_rng", "missing_telemetry_contract"}
+    assert "nondeterministic_rng" in client.prompts[1]
+    assert "missing_telemetry_contract" in client.prompts[1]
 
 
 def test_truncated_html_gets_one_full_document_recovery(tmp_path):
@@ -130,6 +176,7 @@ def test_truncated_html_gets_one_full_document_recovery(tmp_path):
     assert row.ok
     assert client.calls == 2
     assert row.recovery_attempted is True
+    assert row.contract_repair_attempted is False
     assert row.raw_response_path and "initial" in row.raw_response_path
     assert row.recovery_raw_response_path and "recovery" in row.recovery_raw_response_path
     assert row.response_format == "recovered-raw-html"
@@ -137,7 +184,7 @@ def test_truncated_html_gets_one_full_document_recovery(tmp_path):
     assert any("truncation recovery" in warning for warning in row.warnings)
 
 
-def test_non_html_failure_does_not_spend_recovery_call(tmp_path):
+def test_non_html_failure_does_not_spend_recovery_or_contract_repair_call(tmp_path):
     client = SequenceBuilder(["I cannot build that game today."])
     row = PrototypeForge([(FakeSpec(), client)], max_workers=1).build(
         Brief(theme="Unicorns and Rainbows", size_limit_bytes=2048), _concept(), tmp_path
@@ -146,6 +193,7 @@ def test_non_html_failure_does_not_spend_recovery_call(tmp_path):
     assert row.ok is False
     assert client.calls == 1
     assert row.recovery_attempted is False
+    assert row.contract_repair_attempted is False
     assert "no HTML document" in row.error
 
 
@@ -161,5 +209,6 @@ def test_second_truncation_fails_closed_after_one_recovery(tmp_path):
     assert row.ok is False
     assert client.calls == 2
     assert row.recovery_attempted is True
+    assert row.contract_repair_attempted is False
     assert row.recovery_raw_response_path
     assert "no closing </html>" in row.error
