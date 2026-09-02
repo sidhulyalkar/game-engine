@@ -12,6 +12,7 @@ from .game_spec import compile_game_spec
 from .packaging import package_game
 from .providers.base import LLMClient
 from .schema import Brief, Concept, GameSpec
+from .source_falsification import analyze_source
 from .swarm import _extract_json
 
 
@@ -32,12 +33,26 @@ class PrototypeResult:
     recovery_attempted: bool = False
     recovery_raw_response_path: str | None = None
     recovery_finish_reason: str | None = None
+    source_falsification_path: str | None = None
+    source_falsification_blockers: int = 0
+    source_falsification_majors: int = 0
     error: str | None = None
 
 
 def builder_prompt(brief: Brief, spec: GameSpec) -> tuple[str, str]:
     system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied GameSpec. Correctness, game feel, and readability come before code golf. Return ONLY the complete standalone HTML document. Do not return JSON, markdown fences, explanations, or design notes."""
-    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n\nOutput HTML only."""
+    telemetry_shape = {
+        "schema_version": "0.1",
+        "snapshot": "function returning snapshot object",
+        "events": "function returning recent event objects",
+        "snapshot_fields": [
+            "elapsed_ms", "tick", "state", "alive", "game_over", "score", "progress",
+            "restart_count", "entity_count", "action_count", "last_action_ms",
+            "core_mechanic_activations", "progression_transitions", "state_hash",
+        ],
+        "event_shape": {"type": "event name", "at_ms": "elapsed game milliseconds"},
+    }
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nDEVELOPMENT TELEMETRY CONTRACT:\n{json.dumps(telemetry_shape, indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart that actually resumes the simulation loop\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta BEFORE it enters any fixed-step accumulator to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n- if the GameSpec requires deterministic_seed, DO NOT call Math.random(); use a tiny seeded PRNG instead\n- sanity-check time scales: the representative 30-60 second slice must actually reach its promised escalation, and moving hazards must travel gameplay-relevant distances before expiring\n\nTelemetry is REQUIRED in this development prototype:\n- expose `window.__GAME_ENGINE_TELEMETRY__` with `schema_version: '0.1'`, `snapshot()` and `events()`\n- `snapshot()` returns every listed snapshot field; use null only when a field truly has no value\n- `state` uses `playing`, `dead`, or `won`; `progress` is normalized 0..1\n- `entity_count` counts active gameplay entities/particles/trails that can grow over time\n- `action_count` increments only when a player input is accepted by gameplay; `last_action_ms` records that elapsed game time\n- `core_mechanic_activations` increments when the defining GameSpec interaction actually occurs, not on every key press\n- `progression_transitions` increments when difficulty/rule progression changes\n- `state_hash` is a compact deterministic string derived from meaningful gameplay state; DO NOT include wall-clock/elapsed time alone\n- keep a bounded event log (max 256 recent events) containing at least `run_start`, `action_accepted`, `progress_change`, `damage_or_death`, `restart`, `core_mechanic_activation`, and `progression_transition` when those events occur\n- each event is `{{type, at_ms}}`; telemetry must not alter gameplay when read\n- this telemetry is evidence instrumentation, not player-facing UI\n\nThe source is statically falsified before packaging/browser testing. Missing telemetry, Math.random under a deterministic contract, broken restart scheduling, and impossible prototype time scales can reject the build before expensive evaluation.\n\nOutput HTML only."""
     return system, user
 
 
@@ -146,6 +161,7 @@ class PrototypeForge:
                 provider = getattr(provider_spec, "name", getattr(client, "name", "provider"))
                 raw_path: Path | None = None
                 recovery_path: Path | None = None
+                falsification_path: Path | None = None
                 finish_reason: str | None = None
                 recovery_finish_reason: str | None = None
                 recovery_attempted = False
@@ -177,6 +193,19 @@ class PrototypeForge:
 
                     meta_dir = output_dir / "meta"
                     meta_dir.mkdir(parents=True, exist_ok=True)
+                    source_report = analyze_source(html, spec.to_dict())
+                    falsification_path = meta_dir / f"{_safe_name(provider)}-{build_id}-source-falsification.json"
+                    falsification_path.write_text(json.dumps(source_report, indent=2) + "\n")
+
+                    warnings = []
+                    for finding in source_report.get("findings") or []:
+                        if finding.get("severity") == "major":
+                            warnings.append(f"source-falsification major {finding.get('code')}: {finding.get('evidence')}")
+                    if "<canvas" not in html.lower():
+                        warnings.append("No canvas element detected; verify rendering strategy intentionally.")
+                    if recovery_attempted:
+                        warnings.append("Builder required one bounded full-document truncation recovery.")
+
                     meta_path = meta_dir / f"{_safe_name(provider)}-{build_id}.json"
                     meta_path.write_text(json.dumps({
                         "provider": provider,
@@ -190,15 +219,42 @@ class PrototypeForge:
                         "recovery_raw_response": str(recovery_path) if recovery_path else None,
                         "recovery_finish_reason": recovery_finish_reason,
                         "recovery_usage": recovery_usage,
+                        "source_falsification": source_report,
+                        "source_falsification_path": str(falsification_path),
                     }, indent=2) + "\n")
+
+                    blocker_codes = [
+                        str(finding.get("code"))
+                        for finding in source_report.get("findings") or []
+                        if finding.get("severity") == "blocker"
+                    ]
+                    if blocker_codes:
+                        results.append(PrototypeResult(
+                            provider=provider,
+                            build_id=build_id,
+                            ok=False,
+                            source_dir=str(build_dir),
+                            zip_path=None,
+                            compressed_bytes=None,
+                            byte_headroom=None,
+                            warnings=warnings,
+                            raw_response_path=str(raw_path),
+                            response_format=response_format,
+                            game_spec_path=str(spec_path),
+                            finish_reason=finish_reason,
+                            recovery_attempted=recovery_attempted,
+                            recovery_raw_response_path=str(recovery_path) if recovery_path else None,
+                            recovery_finish_reason=recovery_finish_reason,
+                            source_falsification_path=str(falsification_path),
+                            source_falsification_blockers=int(source_report.get("blockers", 0)),
+                            source_falsification_majors=int(source_report.get("majors", 0)),
+                            error="SourceFalsificationError: " + ", ".join(blocker_codes),
+                        ))
+                        continue
 
                     zip_path = output_dir / "dist" / f"{_safe_name(provider)}-{build_id}.zip"
                     report = package_game(build_dir, zip_path, brief.size_limit_bytes)
-                    warnings = list(report.warnings)
-                    if "<canvas" not in html.lower():
-                        warnings.append("No canvas element detected; verify rendering strategy intentionally.")
-                    if recovery_attempted:
-                        warnings.append("Builder required one bounded full-document truncation recovery.")
+                    warnings.extend(report.warnings)
                     results.append(PrototypeResult(
                         provider=provider,
                         build_id=build_id,
@@ -215,6 +271,9 @@ class PrototypeForge:
                         recovery_attempted=recovery_attempted,
                         recovery_raw_response_path=str(recovery_path) if recovery_path else None,
                         recovery_finish_reason=recovery_finish_reason,
+                        source_falsification_path=str(falsification_path),
+                        source_falsification_blockers=int(source_report.get("blockers", 0)),
+                        source_falsification_majors=int(source_report.get("majors", 0)),
                     ))
                 except Exception as exc:
                     results.append(PrototypeResult(
@@ -233,6 +292,7 @@ class PrototypeForge:
                         recovery_attempted=recovery_attempted,
                         recovery_raw_response_path=str(recovery_path) if recovery_path else None,
                         recovery_finish_reason=recovery_finish_reason,
+                        source_falsification_path=str(falsification_path) if falsification_path else None,
                         error=f"{type(exc).__name__}: {exc}",
                     ))
 
