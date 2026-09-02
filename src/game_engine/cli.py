@@ -89,6 +89,7 @@ def cmd_autonomous_tournament(args: argparse.Namespace) -> int:
             audit_providers=Path(args.audit_providers),
             repair_providers=Path(args.repair_providers),
             browsers=browsers,
+            install_browsers_on_demand=args.install_browsers_on_demand,
         )
     except TournamentFailure as exc:
         print(json.dumps({"status": "failed", "stage": exc.stage, "message": exc.message}, indent=2))
@@ -249,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     tournament.add_argument("--audit-providers", default="studio.nvidia.audit.json")
     tournament.add_argument("--repair-providers", default="studio.nvidia.repair.json")
     tournament.add_argument("--browsers", default="chromium,firefox,webkit")
+    tournament.add_argument(
+        "--install-browsers-on-demand",
+        action="store_true",
+        help="install requested Playwright browser engines only after a byte-qualified build exists",
+    )
     tournament.set_defaults(func=cmd_autonomous_tournament)
 
     select = sub.add_parser("select-concept", help="rejudge finalists from independent swarms in one shared population")
