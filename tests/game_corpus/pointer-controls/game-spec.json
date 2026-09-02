@@ -1,0 +1,52 @@
+{
+  "spec_version": "0.2",
+  "source_concept_id": "pointer-fixture",
+  "title": "Pointer Contract",
+  "primary_category": "desktop",
+  "interaction_invariant": "Pointer motion moves the player, primary click scores, and secondary click changes polarity/progress.",
+  "player_goal": "Exercise every advertised pointer binding.",
+  "controls": "Mouse moves; left click scores; right click flips polarity.",
+  "core_loop": ["move pointer", "left click", "right click"],
+  "prototype_scope": ["one arena"],
+  "state_machine": {"states": ["playing", "dead", "won"], "start": "playing", "restart": "fresh playing state"},
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {
+    "hazards_or_enemies": 0,
+    "particles_or_trail_points": 8,
+    "timers_or_scheduled_events": 4,
+    "simultaneous_audio_voices": 2
+  },
+  "sensory_contract": {"visual": "pointer orb and polarity color", "audio": "optional", "readability": "orb position and color change"},
+  "telemetry_contract": {
+    "snapshot": ["elapsed_ms", "state", "score", "progress", "entity_count", "action_count", "core_mechanic_activations", "state_hash"],
+    "events": ["run_start", "action_accepted", "progress_change", "core_mechanic_activation"]
+  },
+  "byte_priorities": ["control correctness"],
+  "non_goals": ["networking"],
+  "actions": [
+    {
+      "id": "pointer",
+      "kind": "pointer_move",
+      "bindings": ["PointerMotion"],
+      "semantics": "move",
+      "required": true,
+      "source": "exact"
+    },
+    {
+      "id": "primary",
+      "kind": "pointer_click",
+      "bindings": ["PrimaryPointer"],
+      "semantics": "press",
+      "required": true,
+      "source": "exact"
+    },
+    {
+      "id": "secondary",
+      "kind": "pointer_click",
+      "bindings": ["SecondaryPointer"],
+      "semantics": "press",
+      "required": true,
+      "source": "exact"
+    }
+  ]
+}
