@@ -16,7 +16,7 @@ class ProviderSpec:
     roles: list[str]
     enabled: bool = True
     temperature: float = 0.9
-    top_p: float = 0.95
+    top_p: float | None = 0.95
     max_tokens: int = 8192
     timeout: int = 180
     retries: int = 3
@@ -28,6 +28,8 @@ class ProviderSpec:
         spec = cls(**value)
         if spec.max_concurrency < 1:
             raise ValueError(f"Provider {spec.name} max_concurrency must be >= 1")
+        if spec.top_p is not None and not 0 <= float(spec.top_p) <= 1:
+            raise ValueError(f"Provider {spec.name} top_p must be 0..1 or null")
         return spec
 
 
