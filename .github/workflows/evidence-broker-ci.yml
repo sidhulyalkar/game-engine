@@ -1,0 +1,104 @@
+name: Evidence Broker CI
+
+on:
+  push:
+    branches:
+      - agent/v0.5-evidence-broker
+    paths:
+      - '.github/workflows/evidence-broker-ci.yml'
+      - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/action_causality.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/playtest.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/restart_playtest.py'
+      - 'src/game_engine/game_spec.py'
+      - 'src/game_engine/schema.py'
+      - 'tests/game_corpus/restart-good/**'
+      - 'tests/test_evidence_broker.py'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/action_causality.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/playtest.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/restart_playtest.py'
+      - 'src/game_engine/game_spec.py'
+      - 'src/game_engine/schema.py'
+      - 'tests/game_corpus/restart-good/**'
+      - 'tests/test_evidence_broker.py'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-broker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium-broker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install evidence lab
+        run: python -m pip install -e '.[reality]' pytest
+
+      - name: Unit contracts
+        run: pytest -q
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Build synthetic Browser Reality qualification
+        run: |
+          mkdir -p /tmp/reality
+          cat > /tmp/reality/qualification.json <<'JSON'
+          {
+            "browsers": ["chromium", "firefox", "webkit"],
+            "full_pass_build_ids": ["restart-good"],
+            "matrix": {
+              "restart-good": {"chromium": true, "firefox": true, "webkit": true}
+            },
+            "initial_text_matrix": {
+              "restart-good": {"chromium": "", "firefox": "", "webkit": ""}
+            }
+          }
+          JSON
+          cat > /tmp/reality/reality.json <<'JSON'
+          [
+            {"build_id":"restart-good","provider":"fixture","browser":"chromium","ok":true},
+            {"build_id":"restart-good","provider":"fixture","browser":"firefox","ok":true},
+            {"build_id":"restart-good","provider":"fixture","browser":"webkit","ok":true}
+          ]
+          JSON
+
+      - name: Run behavioral evidence broker
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from game_engine.evidence_broker import EvidenceBroker
+
+          result = EvidenceBroker(browsers=('chromium',), sample_interval_ms=120).run(
+              Path('tests/game_corpus/restart-good'),
+              Path('/tmp/broker'),
+              Path('/tmp/reality'),
+          )
+          print(json.dumps(result, indent=2))
+          assert result['all_probes_completed'] is True, result
+          assert result['behaviorally_qualified_build_ids'] == ['restart-good'], result
+          assert result['llm_critic_eligible_build_ids'] == ['restart-good'], result
+          q = json.loads(Path('/tmp/broker/critic-reality/qualification.json').read_text())
+          assert q['full_pass_build_ids'] == ['restart-good'], q
+          assert q['behavioral_gate_applied'] is True, q
+          PY
