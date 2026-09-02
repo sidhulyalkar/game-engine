@@ -43,16 +43,16 @@ class StageJournal:
         self.root.mkdir(parents=True, exist_ok=True)
         self._write()
 
-    def record(self, stage: str, status: str, **details: Any) -> None:
+    def record(self, stage: str, stage_status: str, **details: Any) -> None:
         row = {
             "stage": stage,
-            "status": status,
+            "status": stage_status,
             "at_seconds": round(time.time() - self.started_at, 3),
         }
         row.update(details)
         self.rows.append(row)
         self._write()
-        print(f"[studio:{status}] {stage}")
+        print(f"[studio:{stage_status}] {stage}")
         if details:
             print(json.dumps(details, indent=2, default=str))
 
