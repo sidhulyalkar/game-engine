@@ -114,7 +114,8 @@ def test_behavioral_repair_forge_packages_only_static_clean_child(tmp_path):
     assert child.build_id != child.parent_build_id
     assert child.compressed_bytes is not None and child.compressed_bytes < 13 * 1024
     assert child.remaining_source_blockers == []
-    assert Path(child.source_dir, "index.html").read_text() == repaired_html
+    # HTML-native response normalization intentionally strips only outer whitespace.
+    assert Path(child.source_dir, "index.html").read_text().strip() == repaired_html.strip()
     assert Path(child.zip_path).exists()
     assert (out / "game-spec.json").exists()
     manifest = json.loads((out / "behavior-repair-manifest.json").read_text())
