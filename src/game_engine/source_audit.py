@@ -52,6 +52,7 @@ class BuildAudit:
     build_id: str
     provider: str
     critic_count: int
+    failed_critic_count: int
     scores: dict[str, float]
     overall: float
     blockers: int
@@ -124,7 +125,16 @@ def _parse_audit(text: str, provider: str, build_id: str) -> CriticAudit:
 
 
 def aggregate_audits(build: dict, audits: list[CriticAudit]) -> BuildAudit:
+    """Aggregate candidate evidence without turning evaluator outages into candidate failures.
+
+    Promotion requires two independent successful critics elsewhere in the tournament.
+    Until that minimum evidence exists, the build remains `insufficient_evidence` even
+    when a single critic happens to return a strong positive or negative opinion. This
+    keeps provider/schema failures out of the candidate's fitness label while still
+    failing closed at the promotion gate.
+    """
     good = [audit for audit in audits if audit.ok]
+    failed = [audit for audit in audits if not audit.ok]
     scores = {
         name: round(statistics.mean(audit.scores[name] for audit in good), 3) if good else 0.0
         for name in DIMENSIONS
@@ -138,11 +148,10 @@ def aggregate_audits(build: dict, audits: list[CriticAudit]) -> BuildAudit:
     majors = sum(f.severity == "major" for audit in good for f in audit.findings)
     votes = {name: sum(audit.verdict == name for audit in good) for name in ("advance", "repair", "reject")}
 
-    if not good:
-        status = "reject"
+    if len(good) < 2:
+        status = "insufficient_evidence"
     elif (
-        len(good) >= 2
-        and blockers == 0
+        blockers == 0
         and scores["logic_correctness"] >= 7.0
         and scores["concept_fidelity"] >= 7.0
         and scores["first_10s_clarity"] >= 6.5
@@ -159,6 +168,7 @@ def aggregate_audits(build: dict, audits: list[CriticAudit]) -> BuildAudit:
         build_id=build["build_id"],
         provider=build.get("provider", "unknown"),
         critic_count=len(good),
+        failed_critic_count=len(failed),
         scores=scores,
         overall=round(overall, 3),
         blockers=blockers,
@@ -191,6 +201,14 @@ def _filter_browser_qualified(builds: list[dict], reality_root: Path | None) -> 
     payload = json.loads(qualification.read_text())
     allowed = {str(value) for value in payload.get("full_pass_build_ids", [])}
     return [build for build in builds if str(build.get("build_id")) in allowed]
+
+
+_STATUS_ORDER = {
+    "advance": 0,
+    "repair": 1,
+    "insufficient_evidence": 2,
+    "reject": 3,
+}
 
 
 class SourceGameplayLab:
@@ -238,7 +256,7 @@ class SourceGameplayLab:
                 per_build[build["build_id"]].append(audit)
 
         summaries = [aggregate_audits(build, per_build[build["build_id"]]) for build in builds]
-        summaries.sort(key=lambda row: (row.status != "advance", row.status == "reject", -row.overall))
+        summaries.sort(key=lambda row: (_STATUS_ORDER.get(row.status, 99), -row.overall))
         detailed = [
             {
                 **{k: v for k, v in asdict(summary).items() if k != "critic_audits"},
@@ -251,6 +269,7 @@ class SourceGameplayLab:
             "builds_audited": len(summaries),
             "advance_build_ids": [row.build_id for row in summaries if row.status == "advance"],
             "repair_build_ids": [row.build_id for row in summaries if row.status == "repair"],
+            "insufficient_evidence_build_ids": [row.build_id for row in summaries if row.status == "insufficient_evidence"],
             "reject_build_ids": [row.build_id for row in summaries if row.status == "reject"],
             "ranking": [
                 {
@@ -260,6 +279,7 @@ class SourceGameplayLab:
                     "overall": row.overall,
                     "blockers": row.blockers,
                     "critic_count": row.critic_count,
+                    "failed_critic_count": row.failed_critic_count,
                 }
                 for row in summaries
             ],
