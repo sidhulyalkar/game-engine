@@ -76,8 +76,8 @@ def test_acknowledged_but_bookkeeping_only_input_is_rejected():
     assert accepted is True
     assert meaningful is False
     assert visible is False
-    assert "required advertised binding produced no meaningful gameplay effect" in violations
-    assert "input was acknowledged but only bookkeeping changed" in warnings
+    assert "required advertised binding produced no causal gameplay effect beyond matched idle" in violations
+    assert "input was acknowledged but only bookkeeping or matched-idle effects changed" in warnings
 
 
 def test_self_reported_core_activation_and_state_hash_cannot_certify_effect():
@@ -102,8 +102,8 @@ def test_self_reported_core_activation_and_state_hash_cannot_certify_effect():
     assert accepted is True
     assert meaningful is False
     assert visible is False
-    assert "required advertised binding produced no meaningful gameplay effect" in violations
-    assert "input was acknowledged but only bookkeeping changed" in warnings
+    assert "required advertised binding produced no causal gameplay effect beyond matched idle" in violations
+    assert "input was acknowledged but only bookkeeping or matched-idle effects changed" in warnings
 
 
 def test_real_state_and_pixel_effect_passes_required_binding():
@@ -131,6 +131,83 @@ def test_real_state_and_pixel_effect_passes_required_binding():
     assert visible is True
     assert violations == []
     assert warnings == []
+
+
+def test_matched_idle_score_drift_is_subtracted_but_larger_active_delta_survives():
+    before = snapshot(score=0)
+    active_after = snapshot(score=10, action_count=1)
+    control_before = snapshot(score=0)
+    control_after = snapshot(score=1)
+    ok, accepted, meaningful, visible, violations, warnings = assess_action_trial(
+        before,
+        active_after,
+        before_events=[],
+        after_events=[{"type": "action_accepted"}],
+        before_visible_hash="same",
+        after_visible_hash="same",
+        required=True,
+        control_before=control_before,
+        control_after=control_after,
+        control_before_visible_hash="idle-a",
+        control_after_visible_hash="idle-a",
+    )
+    assert ok is True
+    assert accepted is True
+    assert meaningful is True
+    assert visible is False
+    assert violations == []
+    assert "matched idle trial changed gameplay state; active effect was baseline-subtracted" in warnings
+
+
+def test_identical_active_and_idle_progress_is_not_causal():
+    before = snapshot(progress=0.0)
+    active_after = snapshot(progress=0.1, action_count=1)
+    control_before = snapshot(progress=0.0)
+    control_after = snapshot(progress=0.1)
+    ok, accepted, meaningful, visible, violations, warnings = assess_action_trial(
+        before,
+        active_after,
+        before_events=[],
+        after_events=[{"type": "action_accepted"}],
+        before_visible_hash="frame-a",
+        after_visible_hash="frame-b",
+        required=True,
+        control_before=control_before,
+        control_after=control_after,
+        control_before_visible_hash="idle-a",
+        control_after_visible_hash="idle-b",
+    )
+    assert ok is False
+    assert accepted is True
+    assert meaningful is False
+    assert visible is False
+    assert "required advertised binding produced no causal gameplay effect beyond matched idle" in violations
+    assert "matched idle trial changed pixels; visual change alone cannot certify this action" in warnings
+
+
+def test_active_visual_change_counts_when_matched_idle_is_stable():
+    before = snapshot()
+    active_after = snapshot(action_count=1)
+    control_before = snapshot()
+    control_after = snapshot()
+    ok, accepted, meaningful, visible, violations, _ = assess_action_trial(
+        before,
+        active_after,
+        before_events=[],
+        after_events=[{"type": "action_accepted"}],
+        before_visible_hash="frame-a",
+        after_visible_hash="frame-b",
+        required=True,
+        control_before=control_before,
+        control_after=control_after,
+        control_before_visible_hash="idle-a",
+        control_after_visible_hash="idle-a",
+    )
+    assert ok is True
+    assert accepted is True
+    assert meaningful is False
+    assert visible is True
+    assert violations == []
 
 
 def test_unaccepted_required_binding_is_rejected_even_if_idle_animation_changes_pixels():
