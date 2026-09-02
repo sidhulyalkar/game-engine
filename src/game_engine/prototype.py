@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,11 @@ class PrototypeResult:
     recovery_attempted: bool = False
     recovery_raw_response_path: str | None = None
     recovery_finish_reason: str | None = None
+    contract_repair_attempted: bool = False
+    contract_repair_parent_build_id: str | None = None
+    contract_repair_raw_response_path: str | None = None
+    contract_repair_finish_reason: str | None = None
+    contract_repair_remaining_blockers: list[str] = field(default_factory=list)
     source_falsification_path: str | None = None
     source_falsification_blockers: int = 0
     source_falsification_majors: int = 0
@@ -52,7 +57,7 @@ def builder_prompt(brief: Brief, spec: GameSpec) -> tuple[str, str]:
         ],
         "event_shape": {"type": "event name", "at_ms": "elapsed game milliseconds"},
     }
-    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nDEVELOPMENT TELEMETRY CONTRACT:\n{json.dumps(telemetry_shape, indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart that actually resumes the simulation loop\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta BEFORE it enters any fixed-step accumulator to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n- if the GameSpec requires deterministic_seed, DO NOT call Math.random(); use a tiny seeded PRNG instead\n- sanity-check time scales: the representative 30-60 second slice must actually reach its promised escalation, and moving hazards must travel gameplay-relevant distances before expiring\n\nTelemetry is REQUIRED in this development prototype:\n- expose `window.__GAME_ENGINE_TELEMETRY__` with `schema_version: '0.1'`, `snapshot()` and `events()`\n- `snapshot()` returns every listed snapshot field; use null only when a field truly has no value\n- `state` uses `playing`, `dead`, or `won`; `progress` is normalized 0..1\n- `entity_count` counts active gameplay entities/particles/trails that can grow over time\n- `action_count` increments only when a player input is accepted by gameplay; `last_action_ms` records that elapsed game time\n- `core_mechanic_activations` increments when the defining GameSpec interaction actually occurs, not on every key press\n- `progression_transitions` increments when difficulty/rule progression changes\n- `state_hash` is a compact deterministic string derived from meaningful gameplay state; DO NOT include wall-clock/elapsed time alone\n- keep a bounded event log (max 256 recent events) containing at least `run_start`, `action_accepted`, `progress_change`, `damage_or_death`, `restart`, `core_mechanic_activation`, and `progression_transition` when those events occur\n- each event is `{{type, at_ms}}`; telemetry must not alter gameplay when read\n- this telemetry is evidence instrumentation, not player-facing UI\n\nThe source is statically falsified before packaging/browser testing. Missing telemetry, Math.random under a deterministic contract, broken restart scheduling, and impossible prototype time scales can reject the build before expensive evaluation.\n\nOutput HTML only."""
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nDEVELOPMENT TELEMETRY CONTRACT:\n{json.dumps(telemetry_shape, indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart that actually resumes the simulation loop\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta BEFORE it enters any fixed-step accumulator to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n- if the GameSpec requires deterministic_seed, DO NOT call Math.random(); use a tiny seeded PRNG instead\n- sanity-check time scales: the representative 30-60 second slice must actually reach its promised escalation, and moving hazards must travel gameplay-relevant distances before expiring\n\nTelemetry is REQUIRED in this development prototype:\n- expose `window.__GAME_ENGINE_TELEMETRY__` with `schema_version: '0.1'`, `snapshot()` and `events()`\n- `snapshot()` returns every listed snapshot field; use null only when a field truly has no value\n- `state` uses `playing`, `dead`, or `won`; `progress` is normalized 0..1\n- `entity_count` counts active gameplay entities/particles/trails that can grow over time\n- `action_count` increments only when a player input is accepted by gameplay; `last_action_ms` records that elapsed game time\n- `core_mechanic_activations` increments when the defining GameSpec interaction actually occurs, not on every key press\n- `progression_transitions` increments when difficulty/rule progression changes\n- `state_hash` is a compact deterministic string derived from meaningful gameplay state; DO NOT include wall-clock/elapsed time alone\n- keep a bounded event log (max 256 recent events) containing at least `run_start`, `action_accepted`, `progress_change`, `damage_or_death`, `restart`, `core_mechanic_activation`, and `progression_transition` when those events occur\n- each event is `{{type, at_ms}}`; telemetry must not alter gameplay when read\n- this telemetry is evidence instrumentation, not player-facing UI\n\nThe source is statically falsified before packaging/browser testing. Missing telemetry, nondeterministic RNG under a deterministic contract, broken restart scheduling, and impossible prototype time scales can reject the build before expensive evaluation.\n\nOutput HTML only."""
     return system, user
 
 
@@ -99,8 +104,7 @@ def _extract_html_response(text: str) -> tuple[str, str]:
 
 def _looks_like_truncated_html(text: str) -> bool:
     lower = text.lower()
-    has_start = "<!doctype html" in lower or "<html" in lower
-    return has_start and "</html>" not in lower
+    return ("<!doctype html" in lower or "<html" in lower) and "</html>" not in lower
 
 
 def _bounded_draft(text: str, limit: int = 24_000) -> str:
@@ -113,6 +117,30 @@ def _bounded_draft(text: str, limit: int = 24_000) -> str:
 def _recovery_prompt(brief: Brief, spec: GameSpec, draft: str) -> tuple[str, str]:
     system = """You are recovering a truncated standalone HTML game artifact. Return ONLY one complete corrected HTML document from its opening doctype/html tag through </html>. Do not return a fragment, patch, markdown fence, explanation, or alternate design. Preserve the supplied GameSpec and the working ideas in the draft, but repair incomplete syntax and finish the smallest coherent playable implementation."""
     user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), separators=(',', ':'))}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), separators=(',', ':'))}\n\nTRUNCATED DRAFT:\n{_bounded_draft(draft)}\n\nReturn the FULL corrected standalone HTML document only. It must end with </html>."""
+    return system, user
+
+
+def _blocker_codes(report: dict[str, Any]) -> list[str]:
+    return [
+        str(finding.get("code"))
+        for finding in report.get("findings") or []
+        if finding.get("severity") == "blocker"
+    ]
+
+
+def _contract_repair_prompt(
+    brief: Brief,
+    spec: GameSpec,
+    html: str,
+    source_report: dict[str, Any],
+) -> tuple[str, str]:
+    blockers = [
+        finding
+        for finding in source_report.get("findings") or []
+        if finding.get("severity") == "blocker"
+    ]
+    system = """You are performing a surgical contract repair on an existing standalone 13KB HTML game. The game already has a chosen design. Fix ONLY the objective source-contract blockers supplied below. Preserve the mechanic, controls, visuals, pacing, state model, and working code unless a blocker requires changing them. Return ONLY one complete standalone HTML document ending in </html>. No JSON, markdown, patch, explanation, or redesign."""
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), separators=(',', ':'))}\n\nAUTHORITATIVE GAMESPEC:\n{json.dumps(spec.to_dict(), separators=(',', ':'))}\n\nOBJECTIVE BLOCKERS TO FIX:\n{json.dumps(blockers, indent=2)}\n\nCURRENT HTML:\n{_bounded_draft(html, 36_000)}\n\nRepair every listed blocker and no unrelated feature work. Requirements:\n- preserve the defining interaction and controls\n- preserve offline single-file behavior\n- obey deterministic_seed, timing, restart, state bounds, and telemetry contracts exactly\n- if telemetry is missing, instrument the real existing state rather than inventing a parallel fake simulation\n- telemetry reads must be side-effect free and the event log bounded\n- do not silence evidence by deleting gameplay or weakening the GameSpec\n- return the FULL corrected HTML only, ending in </html>\n"""
     return system, user
 
 
@@ -138,6 +166,19 @@ def _complete_with_provenance(client: LLMClient, system: str, prompt: str) -> tu
     return client.complete(system, prompt), None, None
 
 
+def _build_id(provider: str, concept: Concept, spec: GameSpec, html: str) -> str:
+    return hashlib.sha1(
+        f"{provider}:{concept.concept_id}:{spec.spec_version}:{html}".encode()
+    ).hexdigest()[:10]
+
+
+def _write_build_source(output_dir: Path, provider: str, build_id: str, html: str) -> Path:
+    build_dir = output_dir / f"{_safe_name(provider)}-{build_id}"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    (build_dir / "index.html").write_text(html)
+    return build_dir
+
+
 class PrototypeForge:
     def __init__(self, clients: list[tuple[object, LLMClient]], max_workers: int = 4):
         self.clients = clients
@@ -161,12 +202,23 @@ class PrototypeForge:
                 provider = getattr(provider_spec, "name", getattr(client, "name", "provider"))
                 raw_path: Path | None = None
                 recovery_path: Path | None = None
+                contract_repair_path: Path | None = None
                 falsification_path: Path | None = None
                 finish_reason: str | None = None
                 recovery_finish_reason: str | None = None
+                contract_repair_finish_reason: str | None = None
                 recovery_attempted = False
+                contract_repair_attempted = False
+                contract_repair_parent_build_id: str | None = None
                 initial_usage: dict[str, Any] | None = None
                 recovery_usage: dict[str, Any] | None = None
+                contract_repair_usage: dict[str, Any] | None = None
+                build_id = "failed"
+                build_dir: Path | None = None
+                response_format: str | None = None
+                source_report: dict[str, Any] = {}
+                pre_repair_report: dict[str, Any] | None = None
+
                 try:
                     response, finish_reason, initial_usage = future.result()
                     raw_path = _write_raw_response(output_dir, provider, response, "initial")
@@ -184,27 +236,52 @@ class PrototypeForge:
                         html, recovery_format = _extract_html_response(recovered)
                         response_format = f"recovered-{recovery_format}"
 
-                    build_id = hashlib.sha1(
-                        f"{provider}:{concept.concept_id}:{spec.spec_version}:{html}".encode()
-                    ).hexdigest()[:10]
-                    build_dir = output_dir / f"{_safe_name(provider)}-{build_id}"
-                    build_dir.mkdir(parents=True, exist_ok=True)
-                    (build_dir / "index.html").write_text(html)
+                    build_id = _build_id(provider, concept, spec, html)
+                    build_dir = _write_build_source(output_dir, provider, build_id, html)
+                    source_report = analyze_source(html, spec.to_dict())
+                    blocker_codes = _blocker_codes(source_report)
 
                     meta_dir = output_dir / "meta"
                     meta_dir.mkdir(parents=True, exist_ok=True)
-                    source_report = analyze_source(html, spec.to_dict())
+                    if blocker_codes:
+                        contract_repair_attempted = True
+                        contract_repair_parent_build_id = build_id
+                        pre_repair_report = source_report
+                        pre_path = meta_dir / f"{_safe_name(provider)}-{build_id}-source-falsification-pre-repair.json"
+                        pre_path.write_text(json.dumps(pre_repair_report, indent=2) + "\n")
+
+                        repair_system, repair_user = _contract_repair_prompt(
+                            brief, spec, html, source_report
+                        )
+                        repaired_response, contract_repair_finish_reason, contract_repair_usage = _complete_with_provenance(
+                            client, repair_system, repair_user
+                        )
+                        contract_repair_path = _write_raw_response(
+                            output_dir, provider, repaired_response, "contract-repair"
+                        )
+                        repaired_html, repaired_format = _extract_html_response(repaired_response)
+                        html = repaired_html
+                        response_format = f"contract-repaired-{repaired_format}"
+                        build_id = _build_id(provider, concept, spec, html)
+                        build_dir = _write_build_source(output_dir, provider, build_id, html)
+                        source_report = analyze_source(html, spec.to_dict())
+                        blocker_codes = _blocker_codes(source_report)
+
                     falsification_path = meta_dir / f"{_safe_name(provider)}-{build_id}-source-falsification.json"
                     falsification_path.write_text(json.dumps(source_report, indent=2) + "\n")
 
-                    warnings = []
+                    warnings: list[str] = []
                     for finding in source_report.get("findings") or []:
                         if finding.get("severity") == "major":
-                            warnings.append(f"source-falsification major {finding.get('code')}: {finding.get('evidence')}")
+                            warnings.append(
+                                f"source-falsification major {finding.get('code')}: {finding.get('evidence')}"
+                            )
                     if "<canvas" not in html.lower():
                         warnings.append("No canvas element detected; verify rendering strategy intentionally.")
                     if recovery_attempted:
                         warnings.append("Builder required one bounded full-document truncation recovery.")
+                    if contract_repair_attempted and not blocker_codes:
+                        warnings.append("Builder required one bounded deterministic contract repair before packaging.")
 
                     meta_path = meta_dir / f"{_safe_name(provider)}-{build_id}.json"
                     meta_path.write_text(json.dumps({
@@ -219,15 +296,16 @@ class PrototypeForge:
                         "recovery_raw_response": str(recovery_path) if recovery_path else None,
                         "recovery_finish_reason": recovery_finish_reason,
                         "recovery_usage": recovery_usage,
+                        "contract_repair_attempted": contract_repair_attempted,
+                        "contract_repair_parent_build_id": contract_repair_parent_build_id,
+                        "contract_repair_raw_response": str(contract_repair_path) if contract_repair_path else None,
+                        "contract_repair_finish_reason": contract_repair_finish_reason,
+                        "contract_repair_usage": contract_repair_usage,
+                        "pre_repair_source_falsification": pre_repair_report,
                         "source_falsification": source_report,
                         "source_falsification_path": str(falsification_path),
                     }, indent=2) + "\n")
 
-                    blocker_codes = [
-                        str(finding.get("code"))
-                        for finding in source_report.get("findings") or []
-                        if finding.get("severity") == "blocker"
-                    ]
                     if blocker_codes:
                         results.append(PrototypeResult(
                             provider=provider,
@@ -245,10 +323,15 @@ class PrototypeForge:
                             recovery_attempted=recovery_attempted,
                             recovery_raw_response_path=str(recovery_path) if recovery_path else None,
                             recovery_finish_reason=recovery_finish_reason,
+                            contract_repair_attempted=contract_repair_attempted,
+                            contract_repair_parent_build_id=contract_repair_parent_build_id,
+                            contract_repair_raw_response_path=str(contract_repair_path) if contract_repair_path else None,
+                            contract_repair_finish_reason=contract_repair_finish_reason,
+                            contract_repair_remaining_blockers=blocker_codes,
                             source_falsification_path=str(falsification_path),
                             source_falsification_blockers=int(source_report.get("blockers", 0)),
                             source_falsification_majors=int(source_report.get("majors", 0)),
-                            error="SourceFalsificationError: " + ", ".join(blocker_codes),
+                            error="SourceFalsificationError after bounded contract repair: " + ", ".join(blocker_codes),
                         ))
                         continue
 
@@ -271,6 +354,11 @@ class PrototypeForge:
                         recovery_attempted=recovery_attempted,
                         recovery_raw_response_path=str(recovery_path) if recovery_path else None,
                         recovery_finish_reason=recovery_finish_reason,
+                        contract_repair_attempted=contract_repair_attempted,
+                        contract_repair_parent_build_id=contract_repair_parent_build_id,
+                        contract_repair_raw_response_path=str(contract_repair_path) if contract_repair_path else None,
+                        contract_repair_finish_reason=contract_repair_finish_reason,
+                        contract_repair_remaining_blockers=[],
                         source_falsification_path=str(falsification_path),
                         source_falsification_blockers=int(source_report.get("blockers", 0)),
                         source_falsification_majors=int(source_report.get("majors", 0)),
@@ -278,21 +366,28 @@ class PrototypeForge:
                 except Exception as exc:
                     results.append(PrototypeResult(
                         provider=provider,
-                        build_id="failed",
+                        build_id=build_id,
                         ok=False,
-                        source_dir=None,
+                        source_dir=str(build_dir) if build_dir else None,
                         zip_path=None,
                         compressed_bytes=None,
                         byte_headroom=None,
                         warnings=[],
                         raw_response_path=str(raw_path) if raw_path else None,
-                        response_format=None,
+                        response_format=response_format,
                         game_spec_path=str(spec_path),
                         finish_reason=finish_reason,
                         recovery_attempted=recovery_attempted,
                         recovery_raw_response_path=str(recovery_path) if recovery_path else None,
                         recovery_finish_reason=recovery_finish_reason,
+                        contract_repair_attempted=contract_repair_attempted,
+                        contract_repair_parent_build_id=contract_repair_parent_build_id,
+                        contract_repair_raw_response_path=str(contract_repair_path) if contract_repair_path else None,
+                        contract_repair_finish_reason=contract_repair_finish_reason,
+                        contract_repair_remaining_blockers=_blocker_codes(source_report) if source_report else [],
                         source_falsification_path=str(falsification_path) if falsification_path else None,
+                        source_falsification_blockers=int(source_report.get("blockers", 0)) if source_report else 0,
+                        source_falsification_majors=int(source_report.get("majors", 0)) if source_report else 0,
                         error=f"{type(exc).__name__}: {exc}",
                     ))
 
