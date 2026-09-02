@@ -9,6 +9,7 @@ from pathlib import Path
 from .providers.base import LLMClient
 from .reality import discover_builds
 from .schema import Brief, Concept
+from .source_falsification import analyze_source
 from .swarm import _extract_json
 
 
@@ -60,6 +61,8 @@ class BuildAudit:
     verdict_votes: dict[str, int]
     status: str
     critic_audits: list[CriticAudit]
+    deterministic_findings: list[dict] = field(default_factory=list)
+    evidence_source: str = "llm_critics"
 
 
 def auditor_prompt(brief: Brief, concept: Concept, build: dict, html: str, reality: list[dict]) -> tuple[str, str]:
@@ -179,6 +182,24 @@ def aggregate_audits(build: dict, audits: list[CriticAudit]) -> BuildAudit:
     )
 
 
+def _static_reject(build: dict, report: dict) -> BuildAudit:
+    return BuildAudit(
+        build_id=build["build_id"],
+        provider=build.get("provider", "unknown"),
+        critic_count=0,
+        failed_critic_count=0,
+        scores={name: 0.0 for name in DIMENSIONS},
+        overall=0.0,
+        blockers=int(report.get("blockers", 0)),
+        majors=int(report.get("majors", 0)),
+        verdict_votes={"advance": 0, "repair": 0, "reject": 0},
+        status="reject",
+        critic_audits=[],
+        deterministic_findings=list(report.get("findings") or []),
+        evidence_source="deterministic_source_falsification",
+    )
+
+
 def _load_reality(reality_root: Path | None) -> dict[str, list[dict]]:
     if reality_root is None:
         return {}
@@ -232,31 +253,71 @@ class SourceGameplayLab:
             raise ValueError("no cross-browser-qualified builds are eligible for gameplay criticism")
         output_dir.mkdir(parents=True, exist_ok=True)
         reality = _load_reality(reality_root)
-        per_build: dict[str, list[CriticAudit]] = {build["build_id"]: [] for build in builds}
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            futures = {}
-            for build in builds:
-                html = (Path(build["resolved_source_dir"]) / "index.html").read_text()
-                system, prompt = auditor_prompt(brief, concept, build, html, reality.get(build["build_id"], []))
-                for spec, client in self.clients:
-                    provider = getattr(spec, "name", getattr(client, "name", "critic"))
-                    futures[pool.submit(client.complete, system, prompt)] = (provider, build)
-            for future in as_completed(futures):
-                provider, build = futures[future]
-                try:
-                    audit = _parse_audit(future.result(), provider, build["build_id"])
-                except Exception as exc:
-                    audit = CriticAudit(
-                        provider=provider,
-                        build_id=build["build_id"],
-                        ok=False,
-                        error=f"{type(exc).__name__}: {exc}",
+        spec_path = builds_root / "game-spec.json"
+        game_spec = json.loads(spec_path.read_text()) if spec_path.exists() else None
+        html_by_build: dict[str, str] = {}
+        static_reports: dict[str, dict] = {}
+        eligible: list[dict] = []
+        blocked: list[dict] = []
+        for build in builds:
+            build_id = str(build["build_id"])
+            html = (Path(build["resolved_source_dir"]) / "index.html").read_text()
+            html_by_build[build_id] = html
+            if game_spec is None:
+                report = {"qualified": True, "blockers": 0, "majors": 0, "finding_count": 0, "findings": []}
+            else:
+                report = analyze_source(html, game_spec)
+            static_reports[build_id] = report
+            if report.get("qualified", True):
+                eligible.append(build)
+            else:
+                blocked.append(build)
+
+        (output_dir / "source-falsification.json").write_text(json.dumps([
+            {
+                "build_id": str(build["build_id"]),
+                "provider": build.get("provider", "unknown"),
+                **static_reports[str(build["build_id"])],
+            }
+            for build in builds
+        ], indent=2) + "\n")
+
+        per_build: dict[str, list[CriticAudit]] = {build["build_id"]: [] for build in eligible}
+        if eligible:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                futures = {}
+                for build in eligible:
+                    build_id = str(build["build_id"])
+                    system, prompt = auditor_prompt(
+                        brief,
+                        concept,
+                        build,
+                        html_by_build[build_id],
+                        reality.get(build_id, []),
                     )
-                per_build[build["build_id"]].append(audit)
+                    for spec, client in self.clients:
+                        provider = getattr(spec, "name", getattr(client, "name", "critic"))
+                        futures[pool.submit(client.complete, system, prompt)] = (provider, build)
+                for future in as_completed(futures):
+                    provider, build = futures[future]
+                    try:
+                        audit = _parse_audit(future.result(), provider, build["build_id"])
+                    except Exception as exc:
+                        audit = CriticAudit(
+                            provider=provider,
+                            build_id=build["build_id"],
+                            ok=False,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    per_build[build["build_id"]].append(audit)
 
-        summaries = [aggregate_audits(build, per_build[build["build_id"]]) for build in builds]
+        summaries = [aggregate_audits(build, per_build[build["build_id"]]) for build in eligible]
+        for summary in summaries:
+            summary.deterministic_findings = list(static_reports[summary.build_id].get("findings") or [])
+        summaries.extend(_static_reject(build, static_reports[str(build["build_id"])]) for build in blocked)
         summaries.sort(key=lambda row: (_STATUS_ORDER.get(row.status, 99), -row.overall))
+
         detailed = [
             {
                 **{k: v for k, v in asdict(summary).items() if k != "critic_audits"},
@@ -267,6 +328,8 @@ class SourceGameplayLab:
         (output_dir / "audits.json").write_text(json.dumps(detailed, indent=2) + "\n")
         result = {
             "builds_audited": len(summaries),
+            "llm_critic_eligible_build_ids": [str(row["build_id"]) for row in eligible],
+            "falsified_build_ids": [str(row["build_id"]) for row in blocked],
             "advance_build_ids": [row.build_id for row in summaries if row.status == "advance"],
             "repair_build_ids": [row.build_id for row in summaries if row.status == "repair"],
             "insufficient_evidence_build_ids": [row.build_id for row in summaries if row.status == "insufficient_evidence"],
@@ -280,6 +343,7 @@ class SourceGameplayLab:
                     "blockers": row.blockers,
                     "critic_count": row.critic_count,
                     "failed_critic_count": row.failed_critic_count,
+                    "evidence_source": row.evidence_source,
                 }
                 for row in summaries
             ],
