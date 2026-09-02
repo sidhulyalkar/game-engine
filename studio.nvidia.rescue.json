@@ -19,7 +19,7 @@
       "model": "moonshotai/kimi-k3",
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
-      "roles": ["online_specialist", "desktop_specialist"],
+      "roles": ["gameplay_director", "competition_judge", "online_specialist", "desktop_specialist"],
       "temperature": 0.85,
       "top_p": 0.95,
       "max_tokens": 2300,
