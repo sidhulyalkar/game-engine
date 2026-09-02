@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(slots=True)
@@ -47,8 +47,6 @@ def _vector_steps(action: dict[str, Any], hold_ms: int) -> list[InputProgramStep
             if _required(action):
                 raise ActionPlanError(f"{action_id}: missing {direction} binding")
             continue
-        # Test every advertised alias separately. A builder that implements WASD but
-        # silently ignores the advertised Arrow-key alias should be measurable.
         for key in keys:
             value = str(key)
             result.extend([
@@ -66,7 +64,6 @@ def _pointer_click_steps(action_id: str) -> list[InputProgramStep]:
 
 
 def _pointer_drag_steps(action_id: str, hold_ms: int) -> list[InputProgramStep]:
-    # Symmetric normalized trajectories are deterministic across viewport sizes.
     result: list[InputProgramStep] = []
     for label, target in (
         ("right", (0.75, 0.5)),
@@ -90,8 +87,8 @@ def compile_input_program(
 ) -> list[InputProgramStep]:
     """Compile structured GameSpec actions into a reproducible browser-input program.
 
-    Unsupported *required* actions fail closed. Optional unsupported actions are
-    skipped. This keeps the executor honest as new Mobile/WebXR action kinds arrive.
+    Unsupported required actions fail closed. Optional unsupported actions are skipped.
+    This keeps the executor honest as later Mobile/WebXR action kinds arrive.
     """
     if hold_ms < 20 or hold_ms > 2000:
         raise ActionPlanError("hold_ms must be between 20 and 2000")
@@ -141,3 +138,79 @@ def action_boundaries(program: list[InputProgramStep]) -> list[dict[str, Any]]:
             "direction": step.direction,
         })
     return boundaries
+
+
+def _pixel_target(target: tuple[float, float] | None, width: int, height: int) -> tuple[int, int]:
+    if target is None:
+        raise ActionPlanError("pointer command is missing pointer_target")
+    x, y = target
+    if not 0 <= x <= 1 or not 0 <= y <= 1:
+        raise ActionPlanError(f"normalized pointer target out of range: {target}")
+    return int(round(x * width)), int(round(y * height))
+
+
+def step_label(step: InputProgramStep) -> str:
+    detail = step.binding or step.direction or ""
+    suffix = f":{detail}" if detail else ""
+    return f"{step.action_id}:{step.command}{suffix}"
+
+
+def execute_input_program(
+    page: Any,
+    program: list[InputProgramStep],
+    *,
+    viewport_width: int,
+    viewport_height: int,
+    mark: Callable[[str], None] | None = None,
+    sample: Callable[[], None] | None = None,
+    settle_ms: int = 80,
+) -> None:
+    """Execute an abstract input program against a Playwright-like page.
+
+    The function intentionally depends only on the page's keyboard/mouse/wait surface,
+    making its choreography unit-testable without launching a browser. `sample()` is
+    invoked only at explicit action boundaries so later scoring can attribute state
+    changes to the advertised binding that preceded them.
+    """
+    if viewport_width <= 0 or viewport_height <= 0:
+        raise ActionPlanError("viewport dimensions must be positive")
+    if settle_ms < 0 or settle_ms > 5000:
+        raise ActionPlanError("settle_ms must be between 0 and 5000")
+
+    for step in program:
+        if step.command == "key_down":
+            if not step.binding:
+                raise ActionPlanError(f"{step.action_id}: key_down missing binding")
+            page.keyboard.down(step.binding)
+        elif step.command == "key_up":
+            if not step.binding:
+                raise ActionPlanError(f"{step.action_id}: key_up missing binding")
+            page.keyboard.up(step.binding)
+        elif step.command == "wait":
+            page.wait_for_timeout(step.duration_ms)
+        elif step.command == "pointer_click":
+            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            page.mouse.click(x, y)
+        elif step.command == "pointer_down":
+            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            page.mouse.move(x, y)
+            page.mouse.down()
+        elif step.command == "pointer_move":
+            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            page.mouse.move(x, y, steps=6)
+            if step.duration_ms:
+                page.wait_for_timeout(step.duration_ms)
+        elif step.command == "pointer_up":
+            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            page.mouse.move(x, y)
+            page.mouse.up()
+        else:
+            raise ActionPlanError(f"unsupported input program command: {step.command!r}")
+
+        if mark is not None and step.command != "wait":
+            mark(step_label(step))
+        if step.sample_after:
+            if settle_ms:
+                page.wait_for_timeout(settle_ms)
+            if sample is not None:
+                sample()
