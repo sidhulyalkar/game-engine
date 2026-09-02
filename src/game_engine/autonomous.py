@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -150,6 +152,22 @@ def _validate_secret(spec_paths: list[Path]) -> None:
         raise TournamentFailure("configuration", "missing API key environment variables: " + ", ".join(missing))
 
 
+def _browser_install_command(browsers: tuple[str, ...]) -> list[str]:
+    if not browsers:
+        raise ValueError("at least one browser is required")
+    return [sys.executable, "-m", "playwright", "install", "--with-deps", *browsers]
+
+
+def _install_browser_engines(browsers: tuple[str, ...]) -> None:
+    try:
+        subprocess.run(_browser_install_command(browsers), check=True)
+    except subprocess.CalledProcessError as exc:
+        raise TournamentFailure(
+            "browser-engine-install",
+            f"Playwright browser installation failed with exit code {exc.returncode}",
+        ) from exc
+
+
 def run_autonomous_tournament(
     brief_path: Path,
     output_root: Path,
@@ -160,6 +178,7 @@ def run_autonomous_tournament(
     audit_providers: Path = Path("studio.nvidia.audit.json"),
     repair_providers: Path = Path("studio.nvidia.repair.json"),
     browsers: tuple[str, ...] = ("chromium", "firefox", "webkit"),
+    install_browsers_on_demand: bool = False,
 ) -> dict[str, Any]:
     paths = TournamentPaths(output_root)
     journal = StageJournal(output_root, seed)
@@ -284,6 +303,13 @@ def run_autonomous_tournament(
             survivors=len(good),
             builds=[{"race": race, "provider": row.get("provider"), "bytes": row.get("compressed_bytes")} for race, row in good],
         )
+
+        if install_browsers_on_demand:
+            journal.record("browser-engine-install", "started", browsers=list(browsers))
+            _install_browser_engines(browsers)
+            journal.record("browser-engine-install", "passed", browsers=list(browsers))
+        else:
+            journal.record("browser-engine-install", "skipped", reason="caller-managed browser binaries")
 
         for race in ("a", "b"):
             if not any(item_race == race for item_race, _ in good):
