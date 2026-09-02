@@ -7,23 +7,33 @@ on:
     paths:
       - '.github/workflows/gameplay-evidence-ci.yml'
       - 'src/game_engine/playtest.py'
+      - 'src/game_engine/structured_playtest.py'
       - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/game_spec.py'
       - 'src/game_engine/prototype.py'
       - 'src/game_engine/cli.py'
       - 'tests/game_corpus/**'
       - 'tests/test_playtest.py'
       - 'tests/test_visual_playtest.py'
+      - 'tests/test_action_policy.py'
+      - 'tests/test_game_spec.py'
       - 'tests/test_prototype.py'
       - 'pyproject.toml'
   pull_request:
     paths:
       - 'src/game_engine/playtest.py'
+      - 'src/game_engine/structured_playtest.py'
       - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/game_spec.py'
       - 'src/game_engine/prototype.py'
       - 'src/game_engine/cli.py'
       - 'tests/game_corpus/**'
       - 'tests/test_playtest.py'
       - 'tests/test_visual_playtest.py'
+      - 'tests/test_action_policy.py'
+      - 'tests/test_game_spec.py'
       - 'tests/test_prototype.py'
       - 'pyproject.toml'
 
@@ -74,9 +84,41 @@ jobs:
           assert build['instrumented'] is expected['instrumented'], build
           assert build['mechanically_observable'] is expected['mechanically_observable'], build
           assert build['violations'] == expected['violations'], build
+          assert summary['active_policy_source'] == 'legacy-generic-sweep', summary
+          assert summary['action_program'] == [], summary
           assert (null['progress_delta'] or 0) == expected['null_progress_delta'], null
           assert (sweep['core_mechanic_activations'] or 0) >= expected['active_core_mechanic_activations_min'], sweep
           assert sweep['visible_change'] is True, sweep
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Run structured pointer-control fixture
+        run: |
+          python -m game_engine.visual_playtest tests/game_corpus/pointer-controls \
+            --out /tmp/pointer-controls-evidence \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Qualify authoritative pointer motion and buttons
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path('tests/game_corpus/pointer-controls/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/pointer-controls-evidence/playtest-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'pointer-controls')
+          sweep = build['policies']['chromium']['sweep']
+          assert summary['active_policy_source'] == expected['active_policy_source'], summary
+          assert build['instrumented'] is expected['instrumented'], build
+          assert build['mechanically_observable'] is expected['mechanically_observable'], build
+          assert build['independently_observable'] is expected['independently_observable'], build
+          assert sweep['progress_delta'] == expected['progress_delta'], sweep
+          assert sweep['score_delta'] == expected['score_delta'], sweep
+          commands = summary['action_program']
+          assert any(row['kind'] == 'pointer_move' for row in commands), commands
+          assert any(row['binding'] == expected['secondary_binding'] for row in commands), commands
+          assert any(row['command'] == 'pointer_click' and row['binding'] == 'PrimaryPointer' for row in commands), commands
+          assert any(row['command'] == 'pointer_click' and row['binding'] == 'SecondaryPointer' for row in commands), commands
           print(json.dumps(summary, indent=2))
           PY
 
