@@ -209,7 +209,10 @@ def compile_game_spec(brief: Brief, concept: Concept) -> GameSpec:
         state_machine={
             "states": ["playing", "dead", "won"],
             "start": "playing",
-            "restart": "dead/won -> fresh playing state with score, timers, entities, and input state reset",
+            "restart": "Press R from playing/dead/won -> fresh playing run with score, progress, timers, entities, input state, and run elapsed time reset.",
+            "restart_binding": "R",
+            "restart_from": ["playing", "dead", "won"],
+            "restart_count": "increments exactly once per accepted reset and persists across resets",
         },
         timing_contract={
             "simulation": "fixed-step 60 Hz accumulator or rigorously delta-time-scaled variable step",
