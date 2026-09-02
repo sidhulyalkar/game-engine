@@ -1,0 +1,58 @@
+{
+  "spec_version": "0.2",
+  "source_concept_id": "action-noop-fixture",
+  "title": "One Dead Button",
+  "primary_category": "desktop",
+  "interaction_invariant": "Mouse movement, primary click, and secondary click are all required gameplay controls.",
+  "player_goal": "Exercise every advertised pointer binding independently.",
+  "controls": "Mouse moves; left click scores; right click changes polarity.",
+  "core_loop": ["move pointer", "left click", "right click"],
+  "prototype_scope": ["one arena"],
+  "state_machine": {
+    "states": ["playing", "dead", "won"],
+    "start": "playing",
+    "restart": "Press R to fresh playing state",
+    "restart_binding": "R",
+    "restart_from": ["playing", "dead", "won"]
+  },
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {
+    "hazards_or_enemies": 0,
+    "particles_or_trail_points": 8,
+    "timers_or_scheduled_events": 4,
+    "simultaneous_audio_voices": 2
+  },
+  "sensory_contract": {"visual": "orb position, score and polarity color respond to controls", "audio": "optional", "readability": "every control has visible consequence"},
+  "telemetry_contract": {
+    "snapshot": ["elapsed_ms", "state", "score", "progress", "entity_count", "action_count", "core_mechanic_activations", "state_hash"],
+    "events": ["run_start", "action_accepted", "progress_change", "core_mechanic_activation"]
+  },
+  "byte_priorities": ["control correctness"],
+  "non_goals": ["networking"],
+  "actions": [
+    {
+      "id": "pointer",
+      "kind": "pointer_move",
+      "bindings": ["PointerMotion"],
+      "semantics": "move",
+      "required": true,
+      "source": "exact"
+    },
+    {
+      "id": "primary",
+      "kind": "pointer_click",
+      "bindings": ["PrimaryPointer"],
+      "semantics": "press",
+      "required": true,
+      "source": "exact"
+    },
+    {
+      "id": "secondary",
+      "kind": "pointer_click",
+      "bindings": ["SecondaryPointer"],
+      "semantics": "press",
+      "required": true,
+      "source": "exact"
+    }
+  ]
+}
