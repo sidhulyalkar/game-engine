@@ -8,6 +8,7 @@ on:
       - '.github/workflows/evidence-broker-ci.yml'
       - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/behavior_repair.py'
       - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
       - 'src/game_engine/action_policy.py'
@@ -21,11 +22,13 @@ on:
       - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
       - 'tests/test_autonomous_behavioral_gate.py'
+      - 'tests/test_behavior_repair.py'
       - 'pyproject.toml'
   pull_request:
     paths:
       - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/behavior_repair.py'
       - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
       - 'src/game_engine/action_policy.py'
@@ -39,6 +42,7 @@ on:
       - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
       - 'tests/test_autonomous_behavioral_gate.py'
+      - 'tests/test_behavior_repair.py'
       - 'pyproject.toml'
 
 permissions:
@@ -177,4 +181,70 @@ jobs:
               raise AssertionError('behaviorally failed build unexpectedly reached source audit')
           assert stale_a.calls == 0 and stale_b.calls == 0, (stale_a.calls, stale_b.calls)
           print(json.dumps({'good':good, 'stale_critic_calls':[stale_a.calls, stale_b.calls]}, indent=2))
+          PY
+
+      - name: Prove bounded behavioral repair can re-enter evidence funnel
+        run: |
+          python - <<'PY'
+          import json
+          from dataclasses import dataclass
+          from pathlib import Path
+          from game_engine.behavior_repair import BehavioralRepairForge
+          from game_engine.evidence_broker import EvidenceBroker
+          from game_engine.reality import BrowserRealityLab
+          from game_engine.schema import Brief, Concept
+
+          @dataclass
+          class Spec:
+              name: str
+
+          class Repairer:
+              def __init__(self, html):
+                  self.html = html
+                  self.calls = 0
+              def complete(self, system, prompt):
+                  self.calls += 1
+                  assert 'fresh-run restart contract failed' in prompt
+                  return self.html
+
+          repaired_html = Path('tests/game_corpus/restart-good/game/index.html').read_text()
+          repairer = Repairer(repaired_html)
+          concept = Concept(
+              concept_id='fixture', title='Fixture', hook='fixture', core_mechanic='press to mutate',
+              player_goal='mutate then restart', controls='Space, R', core_loop=['press','restart'],
+              escalation=['repeat'], visual_grammar='canvas', audio_grammar='bleep',
+              category_fit=['desktop'], byte_hypothesis='tiny', risks=[], tags=[]
+          )
+          repairs = BehavioralRepairForge([(Spec('repairer'), repairer)], max_workers=1).build(
+              Brief(theme='Unicorns and Rainbows', primary_category='desktop'),
+              concept,
+              Path('tests/game_corpus/restart-stale'),
+              Path('/tmp/broker-stale'),
+              Path('/tmp/behavior-repairs'),
+              max_parents=1,
+          )
+          assert repairer.calls == 1, repairer.calls
+          assert len(repairs) == 1 and repairs[0].ok, repairs
+          child_id = repairs[0].build_id
+
+          reality = BrowserRealityLab(browsers=('chromium',), timeout_ms=10000).run(
+              Path('/tmp/behavior-repairs'), Path('/tmp/behavior-repair-reality')
+          )
+          assert reality['full_pass_build_ids'] == [child_id], reality
+
+          evidence = EvidenceBroker(browsers=('chromium',), sample_interval_ms=120).run(
+              Path('/tmp/behavior-repairs'),
+              Path('/tmp/behavior-repair-evidence'),
+              Path('/tmp/behavior-repair-reality'),
+          )
+          assert evidence['behaviorally_qualified_build_ids'] == [child_id], evidence
+          assert evidence['behavioral_repair_build_ids'] == [], evidence
+          assert evidence['llm_critic_eligible_build_ids'] == [child_id], evidence
+          print(json.dumps({
+              'parent':'restart-stale',
+              'child':child_id,
+              'bytes':repairs[0].compressed_bytes,
+              'reality':reality,
+              'behavior':evidence,
+          }, indent=2))
           PY
