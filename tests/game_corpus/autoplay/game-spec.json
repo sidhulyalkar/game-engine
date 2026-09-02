@@ -1,0 +1,18 @@
+{
+  "spec_version": "0.1",
+  "source_concept_id": "autoplay-fixture",
+  "title": "Autoplay Decoy",
+  "primary_category": "desktop",
+  "interaction_invariant": "Player input should matter, but this adversarial fixture intentionally advances at the same rate without input.",
+  "player_goal": "Expose false agency by comparing active play with an idle baseline.",
+  "controls": "WASD, arrow keys, or Space.",
+  "core_loop": ["wait or press a control", "watch the mark advance automatically", "observe that input adds no stronger outcome"],
+  "prototype_scope": ["one arena", "one representative run"],
+  "state_machine": {"states": ["playing", "dead", "won"], "start": "playing", "restart": "fresh playing state"},
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {"hazards_or_enemies": 0, "particles_or_trail_points": 0, "timers_or_scheduled_events": 4, "simultaneous_audio_voices": 0},
+  "sensory_contract": {"visual": "mark and progress bar animate continuously", "audio": "none", "readability": "static control legend"},
+  "telemetry_contract": {"snapshot": ["elapsed_ms", "state", "score", "progress", "entity_count", "action_count", "core_mechanic_activations", "state_hash"], "events": ["run_start", "action_accepted", "progress_change", "core_mechanic_activation"]},
+  "byte_priorities": ["autoplay adversarial evidence"],
+  "non_goals": ["real player agency", "networking"]
+}
