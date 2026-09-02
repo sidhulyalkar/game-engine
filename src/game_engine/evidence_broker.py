@@ -29,12 +29,7 @@ def combine_behavioral_evidence(
     restart_summary: dict[str, Any] | None,
     visual_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Combine independent probes without averaging them into a fake quality score.
-
-    Required-control causality, restart integrity, and independent player agency are
-    veto-style development gates. Missing evidence is not candidate rejection: it is
-    represented explicitly as `insufficient_evidence` and blocks expensive critics.
-    """
+    """Combine independent probes without averaging them into a fake quality score."""
     ids = sorted({str(value) for value in build_ids})
     action_pass = set((action_summary or {}).get("action_causality_pass_build_ids", []))
     action_fail = set((action_summary or {}).get("action_causality_fail_build_ids", []))
@@ -84,8 +79,6 @@ def combine_behavioral_evidence(
         if gaps:
             status = "insufficient_evidence"
         elif blockers:
-            # These are development defects with coherent repair targets. Do not call
-            # them terminal game-design rejection until a bounded repair has failed.
             status = "behavioral_repair"
         else:
             status = "behaviorally_qualified"
@@ -112,13 +105,51 @@ def combine_behavioral_evidence(
     }
 
 
-class EvidenceBroker:
-    """Run cheap behavioral falsification before subjective LLM criticism.
+def write_critic_reality_view(
+    reality_root: Path,
+    output_dir: Path,
+    eligible_build_ids: Iterable[str],
+) -> Path:
+    """Publish an M3-compatible qualification view filtered by M4 behavior.
 
-    Browser Reality is expected to have already qualified the build across the target
-    browser matrix. These deeper causal probes intentionally use one reference browser
-    by default to avoid tripling evidence cost before the metrics are calibrated.
+    SourceGameplayLab already consumes Browser Reality qualification files. Reusing
+    that narrow interface keeps behavioral evidence decoupled from subjective critic
+    internals while guaranteeing critics cannot see a behaviorally failed build.
     """
+    source_q = reality_root / "qualification.json"
+    if not source_q.exists():
+        raise ValueError(f"missing Browser Reality qualification: {source_q}")
+    payload = json.loads(source_q.read_text())
+    eligible = sorted({str(value) for value in eligible_build_ids})
+    allowed = set(eligible)
+    original = {str(value) for value in payload.get("full_pass_build_ids", [])}
+    if not allowed.issubset(original):
+        unexpected = sorted(allowed - original)
+        raise ValueError(f"behavioral eligibility contains non-Browser-Reality builds: {unexpected}")
+
+    filtered = dict(payload)
+    filtered["full_pass_build_ids"] = eligible
+    if isinstance(filtered.get("matrix"), dict):
+        filtered["matrix"] = {k: v for k, v in filtered["matrix"].items() if str(k) in allowed}
+    if isinstance(filtered.get("initial_text_matrix"), dict):
+        filtered["initial_text_matrix"] = {
+            k: v for k, v in filtered["initial_text_matrix"].items() if str(k) in allowed
+        }
+    filtered["behavioral_gate_applied"] = True
+    filtered["behavioral_gate_source"] = "evidence-broker.json"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "qualification.json").write_text(json.dumps(filtered, indent=2) + "\n")
+    source_reality = reality_root / "reality.json"
+    if source_reality.exists():
+        # Keep the original browser traces. SourceGameplayLab groups them by build and
+        # only consumes rows for builds that survive qualification.
+        (output_dir / "reality.json").write_text(source_reality.read_text())
+    return output_dir
+
+
+class EvidenceBroker:
+    """Run cheap behavioral falsification before subjective LLM criticism."""
 
     def __init__(
         self,
@@ -181,5 +212,11 @@ class EvidenceBroker:
         result["reference_browsers"] = list(self.browsers)
         result["probe_errors"] = errors
         result["all_probes_completed"] = not errors
+        critic_view = write_critic_reality_view(
+            reality_root,
+            output_dir / "critic-reality",
+            result["llm_critic_eligible_build_ids"],
+        )
+        result["critic_reality_root"] = str(critic_view)
         (output_dir / "evidence-broker.json").write_text(json.dumps(result, indent=2) + "\n")
         return result
