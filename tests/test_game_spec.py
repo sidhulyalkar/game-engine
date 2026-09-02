@@ -67,6 +67,10 @@ def test_game_spec_strips_expansion_work_from_first_prototype():
     assert spec.actions[0]["bindings"]["up"] == ["w", "ArrowUp"]
     assert spec.actions[1]["bindings"] == ["Space"]
     assert spec.actions[1]["source"] == "integrator-default"
+    assert spec.state_machine["restart_binding"] == "R"
+    assert spec.state_machine["restart_from"] == ["playing", "dead", "won"]
+    assert "score, progress" in spec.state_machine["restart"]
+    assert "increments exactly once" in spec.state_machine["restart_count"]
 
 
 def test_exact_named_desktop_controls_are_preserved():
