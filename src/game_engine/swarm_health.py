@@ -27,6 +27,22 @@ def provider_model_map(spec_groups: Iterable[Iterable[ProviderSpec]]) -> dict[st
     return result
 
 
+def _legacy_failure_class(row: dict[str, Any]) -> str:
+    error = str(row.get("error") or "unknown")
+    lowered = error.lower()
+    if "timeout" in lowered or "transport failure" in lowered:
+        return "transport"
+    if "http 429" in lowered:
+        return "rate_limit"
+    if "http 404" in lowered or "not found" in lowered:
+        return "endpoint_or_model_not_found"
+    if "http 5" in lowered:
+        return "server_5xx"
+    if "valueerror" in lowered or "json" in lowered or "schema" in lowered or "exceeds" in lowered:
+        return "content_or_schema"
+    return "other"
+
+
 def contribution_summary(contributions: list[dict[str, Any]], models: dict[str, str]) -> dict[str, Any]:
     successful = [row for row in contributions if row.get("ok")]
     covered_roles = sorted({str(row.get("role")) for row in successful if row.get("role")})
@@ -37,30 +53,33 @@ def contribution_summary(contributions: list[dict[str, Any]], models: dict[str, 
         if row.get("provider")
     })
     failures: dict[str, int] = {}
+    skipped: dict[str, int] = {}
     for row in contributions:
         if row.get("ok"):
             continue
-        error = str(row.get("error") or "unknown")
-        lowered = error.lower()
-        if "timeout" in lowered:
-            kind = "timeout"
-        elif "http 429" in lowered:
-            kind = "rate_limit"
-        elif "http 404" in lowered or "not found" in lowered:
-            kind = "endpoint_or_model_not_found"
-        elif "http 5" in lowered:
-            kind = "server_5xx"
-        elif "valueerror" in lowered or "json" in lowered or "schema" in lowered or "exceeds" in lowered:
-            kind = "content_or_schema"
-        else:
-            kind = "other"
-        failures[kind] = failures.get(kind, 0) + 1
+        explicit = str(row.get("failure_class") or "").strip()
+        kind = explicit or _legacy_failure_class(row)
+        target = skipped if row.get("skipped") else failures
+        target[kind] = target.get(kind, 0) + 1
     return {
         "successful_assignments": len(successful),
         "successful_providers": successful_providers,
         "successful_models": successful_models,
         "covered_roles": covered_roles,
         "failure_classes": failures,
+        "skipped_classes": skipped,
+        "skipped_assignments": sum(skipped.values()),
+    }
+
+
+def _diversity_fields(summary: dict[str, Any]) -> dict[str, Any]:
+    model_count = len(summary["successful_models"])
+    heterogeneous = model_count >= 2
+    return {
+        "model_family_count": model_count,
+        "heterogeneous_models": heterogeneous,
+        "diversity_shortfall": model_count < 2,
+        "evidence_confidence": "heterogeneous" if heterogeneous else ("single-family" if model_count else "none"),
     }
 
 
@@ -79,6 +98,7 @@ def assess_primary_health(
     population_size = int(manifest.get("population_size", 0))
     winner_present = bool(manifest.get("winner_id"))
     llm_expanded_population = population_size > deterministic_seed_count
+    diversity = _diversity_fields(summary)
 
     usable = (
         bool(summary["successful_models"])
@@ -86,13 +106,13 @@ def assess_primary_health(
         and llm_expanded_population
         and winner_present
     )
-    qualified = (
+    coverage_quorum = (
         usable
-        and len(summary["successful_models"]) >= 2
         and summary["successful_assignments"] >= 5
         and not missing
     )
-    if qualified:
+    fully_qualified = coverage_quorum and diversity["heterogeneous_models"]
+    if fully_qualified:
         status = "qualified"
     elif usable:
         status = "degraded"
@@ -102,7 +122,8 @@ def assess_primary_health(
     return {
         "status": status,
         "usable": usable,
-        "qualified": qualified,
+        "qualified": fully_qualified,
+        "coverage_quorum": coverage_quorum,
         "rescue_required": status == "degraded",
         "required_roles": required,
         "covered_roles": summary["covered_roles"],
@@ -111,10 +132,13 @@ def assess_primary_health(
         "successful_providers": summary["successful_providers"],
         "successful_models": summary["successful_models"],
         "failure_classes": summary["failure_classes"],
+        "skipped_classes": summary["skipped_classes"],
+        "skipped_assignments": summary["skipped_assignments"],
         "population_size": population_size,
         "deterministic_seed_count": deterministic_seed_count,
         "llm_expanded_population": llm_expanded_population,
         "winner_present": winner_present,
+        **diversity,
     }
 
 
@@ -132,17 +156,18 @@ def build_rescue_config(
     primary_health: dict[str, Any],
     brief: Brief,
 ) -> dict[str, Any]:
-    """Build a bounded rescue roster with redundant gate-critical coverage.
+    """Build a bounded rescue roster for missing critical evidence and diversity.
 
-    Universal judge/gameplay roles are fragile single points of failure if only one
-    model family owns them. Missing universal critical roles therefore receive up to
-    two independent rescue model families when configured. The active medium
-    specialist receives one targeted owner by default. Additional calls are added
-    only when needed to make the five-assignment health quorum reachable or to add a
-    novel model family. Expansion-medium specialists remain inactive.
+    Every missing gate-critical role receives up to two distinct configured model
+    families when available, including the active medium specialist. This prevents a
+    single remote family from being the only keyholder for Desktop/Online/WebXR
+    qualification. Model-family diversity is still pursued, but the final health gate
+    treats it as confidence evidence rather than discarding complete role coverage
+    during a partial provider outage.
     """
     missing_order = [str(role) for role in primary_health.get("missing_roles") or []]
     missing = set(missing_order)
+    critical = set(critical_roles(brief))
     primary_models = set(primary_health.get("successful_models") or [])
     successful_assignments = int(primary_health.get("successful_assignments", 0))
     need_model_diversity = len(primary_models) < 2
@@ -156,13 +181,11 @@ def build_rescue_config(
         selected[spec.name].append(role)
         return True
 
-    # Fill missing evidence first. Universal critical roles get two-family redundancy
-    # when possible; the medium specialist remains a narrow one-owner recovery task.
     redundant_roles: list[str] = []
     for role in missing_order:
         candidates = [spec for spec in base_specs if role in active_by_name[spec.name]]
         candidates.sort(key=lambda spec: (spec.model in primary_models, spec.name))
-        target_models = 2 if role in UNIVERSAL_CRITICAL_ROLES else 1
+        target_models = 2 if role in critical else 1
         seen_models: set[str] = set()
         for spec in candidates:
             if spec.model in seen_models:
@@ -171,15 +194,16 @@ def build_rescue_config(
                 seen_models.add(spec.model)
             if len(seen_models) >= target_models:
                 break
-        if role in UNIVERSAL_CRITICAL_ROLES and len(seen_models) >= 2:
+        if role in critical and len(seen_models) >= 2:
             redundant_roles.append(role)
 
     def selected_specs() -> list[ProviderSpec]:
         names = {name for name, roles in selected.items() if roles}
         return [spec for spec in base_specs if spec.name in names]
 
-    # If the primary only has one model family, make sure the rescue plan actually
-    # calls a different model. Prefer a role already required by this brief.
+    # If role coverage is already complete but the primary has only one model family,
+    # spend at most one bounded call on an independently configured model. This is an
+    # evidence-quality upgrade, not a hard requirement for final concept-stage health.
     if need_model_diversity and not any(spec.model not in primary_models for spec in selected_specs()):
         novel = [spec for spec in base_specs if spec.model not in primary_models and active_by_name[spec.name]]
         novel.sort(key=lambda spec: spec.name)
@@ -189,9 +213,6 @@ def build_rescue_config(
             role = preferred[0] if preferred else active_by_name[spec.name][0]
             add(spec, role)
 
-    # A degraded swarm may have complete role coverage but still be below the five
-    # successful-assignment quorum. Plan just enough unique rescue calls that the
-    # quorum is reachable if they succeed.
     needed_calls = max(0, 5 - successful_assignments)
     while sum(len(roles) for roles in selected.values()) < needed_calls:
         candidates: list[tuple[bool, str, ProviderSpec, str]] = []
@@ -247,14 +268,21 @@ def assess_combined_health(
     required = critical_roles(brief)
     covered = set(summary["covered_roles"])
     missing = [role for role in required if role not in covered]
-    qualified = (
-        len(summary["successful_models"]) >= 2
+    diversity = _diversity_fields(summary)
+
+    # Final concept-stage qualification is a coverage quorum. Heterogeneous model
+    # evidence raises confidence but cannot veto complete evidence merely because a
+    # remote model family is temporarily unavailable. Downstream byte/browser/source/
+    # behavioral/player-facing gates remain independent promotion blockers.
+    coverage_quorum = (
+        bool(summary["successful_models"])
         and summary["successful_assignments"] >= 5
         and not missing
     )
     return {
-        "status": "qualified" if qualified else "failed",
-        "qualified": qualified,
+        "status": "qualified" if coverage_quorum else "failed",
+        "qualified": coverage_quorum,
+        "coverage_quorum": coverage_quorum,
         "required_roles": required,
         "covered_roles": summary["covered_roles"],
         "missing_roles": missing,
@@ -262,6 +290,9 @@ def assess_combined_health(
         "successful_providers": summary["successful_providers"],
         "successful_models": summary["successful_models"],
         "failure_classes": summary["failure_classes"],
+        "skipped_classes": summary["skipped_classes"],
+        "skipped_assignments": summary["skipped_assignments"],
+        **diversity,
     }
 
 
@@ -281,11 +312,6 @@ def write_primary_health_plan(
     output_dir: Path,
     deterministic_seed_count: int,
 ) -> dict[str, Any]:
-    """Persist primary health and the smallest rescue configuration.
-
-    A degraded primary is a valid intermediate result. It may advance only to rescue,
-    never directly to concept selection. A truly unusable primary fails closed.
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(manifest_path.read_text())
     primary_specs = load_provider_specs(primary_specs_path)
@@ -302,13 +328,23 @@ def write_primary_health_plan(
     rescue_path = output_dir / "rescue.generated.json"
     rescue_path.write_text(json.dumps(rescue_config, indent=2) + "\n")
     reason = rescue_config.get("rescue_reason", {})
-    health["rescue_provider_count"] = len(rescue_config["providers"])
+    provider_count = len(rescue_config["providers"])
+    coverage_repair_required = not bool(health.get("coverage_quorum"))
+    diversity_rescue_recommended = (
+        bool(health.get("coverage_quorum"))
+        and bool(health.get("diversity_shortfall"))
+        and provider_count > 0
+        and bool(reason.get("novel_model_plannable", False))
+    )
+    health["rescue_provider_count"] = provider_count
+    health["coverage_repair_required"] = coverage_repair_required
+    health["diversity_rescue_recommended"] = diversity_rescue_recommended
+    health["rescue_required"] = bool(health["usable"]) and (coverage_repair_required or diversity_rescue_recommended)
     health["rescue_plannable"] = (
         not health["rescue_required"]
         or (
-            bool(rescue_config["providers"])
-            and not reason.get("uncovered_missing_roles")
-            and bool(reason.get("novel_model_plannable", True))
+            provider_count > 0
+            and (not coverage_repair_required or not reason.get("uncovered_missing_roles"))
         )
     )
     health["rescue_config_path"] = str(rescue_path)
@@ -324,7 +360,6 @@ def write_combined_health(
     rescue_contributions_path: Path | None = None,
     rescue_specs_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Persist the final concept-stage health after optional targeted rescue."""
     output_dir.mkdir(parents=True, exist_ok=True)
     contribution_sets = [load_contributions(primary_contributions_path)]
     spec_groups = [load_provider_specs(primary_specs_path)]
