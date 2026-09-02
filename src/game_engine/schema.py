@@ -37,7 +37,6 @@ class Brief:
                 if str(value).strip() and str(value).lower() != self.primary_category
             ]
 
-        # Keep the old field as a stable all-intents mirror for artifacts/readers.
         self.target_categories = list(dict.fromkeys([self.primary_category, *self.expansion_categories]))
 
     @property
@@ -115,6 +114,9 @@ class GameSpec:
     telemetry_contract: dict[str, list[str]]
     byte_priorities: list[str]
     non_goals: list[str]
+    # Structured, authoritative controls for implementation and behavioral probes.
+    # Kept optional for backward compatibility with pre-v0.2 GameSpec artifacts.
+    actions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

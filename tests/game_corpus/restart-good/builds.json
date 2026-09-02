@@ -1,0 +1,12 @@
+[
+  {
+    "provider": "fixture",
+    "build_id": "restart-good",
+    "ok": true,
+    "source_dir": "game",
+    "zip_path": null,
+    "compressed_bytes": 1024,
+    "byte_headroom": 12288,
+    "warnings": []
+  }
+]

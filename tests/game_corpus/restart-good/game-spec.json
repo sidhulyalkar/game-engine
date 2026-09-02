@@ -1,0 +1,42 @@
+{
+  "spec_version": "0.2",
+  "source_concept_id": "restart-fixture",
+  "title": "Fresh Restart",
+  "primary_category": "desktop",
+  "interaction_invariant": "Space visibly mutates score and progress; R rebuilds a fresh run.",
+  "player_goal": "Mutate the run and prove deterministic reset.",
+  "controls": "Space activates; R restarts.",
+  "core_loop": ["activate", "observe mutation", "restart"],
+  "prototype_scope": ["one arena"],
+  "state_machine": {
+    "states": ["playing", "dead", "won"],
+    "start": "playing",
+    "restart": "Press R from any state to fresh playing state",
+    "restart_binding": "R",
+    "restart_from": ["playing", "dead", "won"]
+  },
+  "timing_contract": {"delta_time_seconds": true, "frame_rate_independent_damping": true},
+  "state_bounds": {
+    "hazards_or_enemies": 0,
+    "particles_or_trail_points": 4,
+    "timers_or_scheduled_events": 4,
+    "simultaneous_audio_voices": 2
+  },
+  "sensory_contract": {"visual": "orb position and color encode fresh versus mutated state", "audio": "optional", "readability": "score and orb change"},
+  "telemetry_contract": {
+    "snapshot": ["elapsed_ms", "state", "score", "progress", "restart_count", "entity_count", "action_count", "core_mechanic_activations", "state_hash"],
+    "events": ["run_start", "action_accepted", "progress_change", "restart", "core_mechanic_activation"]
+  },
+  "byte_priorities": ["restart correctness"],
+  "non_goals": ["networking"],
+  "actions": [
+    {
+      "id": "primary",
+      "kind": "key",
+      "bindings": ["Space"],
+      "semantics": "press",
+      "required": true,
+      "source": "exact"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "expected": {
+    "restart_binding": "R",
+    "ok": false,
+    "pre_restart_mutated": true,
+    "independent_visual_mutation": true,
+    "restart_visual_response": false,
+    "restart_event_seen": true,
+    "required_violation_substrings": [
+      "no independent player-visible response",
+      "restore score",
+      "restore progress",
+      "restore action_count",
+      "stale last_action_ms",
+      "state_hash stayed identical"
+    ]
+  }
+}
