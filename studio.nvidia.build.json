@@ -6,12 +6,18 @@
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
       "roles": [],
-      "temperature": 0.7,
-      "top_p": 0.9,
-      "max_tokens": 6144,
-      "timeout": 240,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "max_tokens": 12000,
+      "timeout": 300,
       "retries": 1,
       "max_concurrency": 1,
+      "extra_body": {
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {
+          "force_nonempty_content": true
+        }
+      },
       "enabled": true
     },
     {
@@ -20,12 +26,15 @@
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
       "roles": [],
-      "temperature": 0.65,
-      "top_p": 0.9,
-      "max_tokens": 4096,
-      "timeout": 240,
+      "temperature": 1.0,
+      "top_p": null,
+      "max_tokens": 10000,
+      "timeout": 300,
       "retries": 0,
       "max_concurrency": 1,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
       "enabled": true
     }
   ]
