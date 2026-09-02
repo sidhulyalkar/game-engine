@@ -7,6 +7,30 @@ from .evaluators import judge
 from .schema import Brief, Concept
 
 
+def _successful_generated_ids(leaderboard_path: Path) -> set[str] | None:
+    """Read the swarm contribution sidecar when it exists.
+
+    Swarm leaderboards include deterministic seeds as context/baseline. For rescue
+    populations those seeds must not receive a second path into finalist selection:
+    rescue is evidence produced by the rescue assignments, not a second procedural
+    baseline. Returning None means no sidecar exists and legacy callers keep their
+    previous behavior.
+    """
+    contribution_path = leaderboard_path.parent / "contributions.json"
+    if not contribution_path.exists():
+        return None
+    payload = json.loads(contribution_path.read_text())
+    if not isinstance(payload, list):
+        raise ValueError(f"contributions must be a list: {contribution_path}")
+    return {
+        str(concept_id)
+        for row in payload
+        if isinstance(row, dict) and row.get("ok")
+        for concept_id in (row.get("concept_ids") or [])
+        if concept_id
+    }
+
+
 def select_joint_finalist(
     brief: Brief,
     sources: dict[str, Path],
@@ -18,17 +42,35 @@ def select_joint_finalist(
     Swarm-local totals include population-relative novelty, so winner totals from
     different runs are not directly comparable. This creates a single finalist
     population and recomputes every scorecard against the same competitors.
+
+    Rescue leaderboards are a special evidence source: deterministic seeds inside
+    them exist only to give rescue agents context. If a rescue contributions sidecar
+    is present, only concept IDs actually returned by successful rescue assignments
+    may enter the joint finalist population.
     """
     candidates: list[tuple[str, Concept, float, int]] = []
+    source_candidate_counts: dict[str, int] = {}
+    source_filtered_counts: dict[str, int] = {}
     for source, path in sources.items():
         if not path.exists():
             continue
         rows = json.loads(path.read_text())
-        for row in rows[: max(1, top_k_per_source)]:
+        eligible_ids = _successful_generated_ids(path) if source.lower() == "rescue" else None
+        accepted = 0
+        filtered = 0
+        for row in rows:
             concept = Concept.from_dict(row["concept"])
+            if eligible_ids is not None and concept.concept_id not in eligible_ids:
+                filtered += 1
+                continue
             original = float((row.get("scorecard") or {}).get("total", 0.0))
             original_rank = int(row.get("rank", len(candidates) + 1))
             candidates.append((source, concept, original, original_rank))
+            accepted += 1
+            if accepted >= max(1, top_k_per_source):
+                break
+        source_candidate_counts[source] = accepted
+        source_filtered_counts[source] = filtered
 
     if not candidates:
         raise ValueError("no finalist candidates found")
@@ -78,6 +120,8 @@ def select_joint_finalist(
         "ranking": ranking,
         "candidate_count": len(rescored),
         "top_k_per_source": top_k_per_source,
+        "source_candidate_counts": source_candidate_counts,
+        "source_filtered_counts": source_filtered_counts,
     }
 
 
@@ -99,6 +143,8 @@ def write_joint_selection(
         "title": selected["concept"].title,
         "candidate_count": selected["candidate_count"],
         "top_k_per_source": selected["top_k_per_source"],
+        "source_candidate_counts": selected["source_candidate_counts"],
+        "source_filtered_counts": selected["source_filtered_counts"],
         "ranking": selected["ranking"],
         "score_scope": "joint-finalist-population",
     }
