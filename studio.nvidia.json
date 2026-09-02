@@ -39,11 +39,11 @@
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
       "roles": ["visual_director", "audio_director", "onboarding_critic", "mobile_specialist"],
-      "temperature": 0.95,
-      "top_p": 0.95,
-      "max_tokens": 6144,
-      "timeout": 180,
-      "retries": 1,
+      "temperature": 1.0,
+      "top_p": null,
+      "max_tokens": 3072,
+      "timeout": 120,
+      "retries": 0,
       "max_concurrency": 1,
       "enabled": true
     }
