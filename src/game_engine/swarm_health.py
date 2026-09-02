@@ -132,39 +132,104 @@ def build_rescue_config(
     primary_health: dict[str, Any],
     brief: Brief,
 ) -> dict[str, Any]:
-    """Build the smallest configured rescue roster that targets evidence gaps.
+    """Build a bounded rescue roster with redundant gate-critical coverage.
 
-    Missing critical roles are always requested when a configured rescue model can
-    cover them. If primary has fewer than two model IDs, at least one active role is
-    also assigned to a novel model family so aliases of the same model cannot fake
-    diversity.
+    Universal judge/gameplay roles are fragile single points of failure if only one
+    model family owns them. Missing universal critical roles therefore receive up to
+    two independent rescue model families when configured. The active medium
+    specialist receives one targeted owner by default. Additional calls are added
+    only when needed to make the five-assignment health quorum reachable or to add a
+    novel model family. Expansion-medium specialists remain inactive.
     """
-    missing = set(primary_health.get("missing_roles") or [])
+    missing_order = [str(role) for role in primary_health.get("missing_roles") or []]
+    missing = set(missing_order)
     primary_models = set(primary_health.get("successful_models") or [])
+    successful_assignments = int(primary_health.get("successful_assignments", 0))
     need_model_diversity = len(primary_models) < 2
-    providers: list[dict[str, Any]] = []
-    novel_family_assigned = False
 
+    active_by_name = {spec.name: _active_rescue_roles(spec, brief) for spec in base_specs}
+    selected: dict[str, list[str]] = {spec.name: [] for spec in base_specs}
+
+    def add(spec: ProviderSpec, role: str) -> bool:
+        if role not in active_by_name[spec.name] or role in selected[spec.name]:
+            return False
+        selected[spec.name].append(role)
+        return True
+
+    # Fill missing evidence first. Universal critical roles get two-family redundancy
+    # when possible; the medium specialist remains a narrow one-owner recovery task.
+    redundant_roles: list[str] = []
+    for role in missing_order:
+        candidates = [spec for spec in base_specs if role in active_by_name[spec.name]]
+        candidates.sort(key=lambda spec: (spec.model in primary_models, spec.name))
+        target_models = 2 if role in UNIVERSAL_CRITICAL_ROLES else 1
+        seen_models: set[str] = set()
+        for spec in candidates:
+            if spec.model in seen_models:
+                continue
+            if add(spec, role):
+                seen_models.add(spec.model)
+            if len(seen_models) >= target_models:
+                break
+        if role in UNIVERSAL_CRITICAL_ROLES and len(seen_models) >= 2:
+            redundant_roles.append(role)
+
+    def selected_specs() -> list[ProviderSpec]:
+        names = {name for name, roles in selected.items() if roles}
+        return [spec for spec in base_specs if spec.name in names]
+
+    # If the primary only has one model family, make sure the rescue plan actually
+    # calls a different model. Prefer a role already required by this brief.
+    if need_model_diversity and not any(spec.model not in primary_models for spec in selected_specs()):
+        novel = [spec for spec in base_specs if spec.model not in primary_models and active_by_name[spec.name]]
+        novel.sort(key=lambda spec: spec.name)
+        if novel:
+            spec = novel[0]
+            preferred = [role for role in missing_order if role in active_by_name[spec.name]]
+            role = preferred[0] if preferred else active_by_name[spec.name][0]
+            add(spec, role)
+
+    # A degraded swarm may have complete role coverage but still be below the five
+    # successful-assignment quorum. Plan just enough unique rescue calls that the
+    # quorum is reachable if they succeed.
+    needed_calls = max(0, 5 - successful_assignments)
+    while sum(len(roles) for roles in selected.values()) < needed_calls:
+        candidates: list[tuple[bool, str, ProviderSpec, str]] = []
+        for spec in base_specs:
+            for role in active_by_name[spec.name]:
+                if role not in selected[spec.name]:
+                    candidates.append((spec.model in primary_models, spec.name, spec, role))
+        if not candidates:
+            break
+        _, _, spec, role = sorted(candidates, key=lambda row: (row[0], row[1], row[3]))[0]
+        add(spec, role)
+
+    providers: list[dict[str, Any]] = []
     for spec in base_specs:
-        active_roles = _active_rescue_roles(spec, brief)
-        chosen = [role for role in active_roles if role in missing]
-        is_novel = spec.model not in primary_models
-        if need_model_diversity and is_novel and not novel_family_assigned and not chosen and active_roles:
-            chosen = [active_roles[0]]
-        if not chosen:
+        roles = selected[spec.name]
+        if not roles:
             continue
-        if is_novel:
-            novel_family_assigned = True
         payload = asdict(spec)
-        payload["roles"] = list(dict.fromkeys(chosen))
+        payload["roles"] = roles
         providers.append(payload)
 
+    assigned_roles = {role for roles in selected.values() for role in roles}
+    uncovered_missing_roles = [role for role in missing_order if role not in assigned_roles]
+    novel_model_plannable = (
+        not need_model_diversity
+        or any(spec.model not in primary_models for spec in selected_specs())
+    )
     return {
         "providers": providers,
         "rescue_reason": {
             "missing_roles": sorted(missing),
+            "uncovered_missing_roles": uncovered_missing_roles,
+            "redundant_critical_roles": sorted(redundant_roles),
             "need_model_diversity": need_model_diversity,
+            "novel_model_plannable": novel_model_plannable,
             "primary_models": sorted(primary_models),
+            "primary_successful_assignments": successful_assignments,
+            "planned_assignments": sum(len(roles) for roles in selected.values()),
         },
     }
 
@@ -236,8 +301,16 @@ def write_primary_health_plan(
     rescue_config = build_rescue_config(rescue_specs, health, brief)
     rescue_path = output_dir / "rescue.generated.json"
     rescue_path.write_text(json.dumps(rescue_config, indent=2) + "\n")
+    reason = rescue_config.get("rescue_reason", {})
     health["rescue_provider_count"] = len(rescue_config["providers"])
-    health["rescue_plannable"] = (not health["rescue_required"]) or bool(rescue_config["providers"])
+    health["rescue_plannable"] = (
+        not health["rescue_required"]
+        or (
+            bool(rescue_config["providers"])
+            and not reason.get("uncovered_missing_roles")
+            and bool(reason.get("novel_model_plannable", True))
+        )
+    )
     health["rescue_config_path"] = str(rescue_path)
     (output_dir / "primary-health.json").write_text(json.dumps(health, indent=2) + "\n")
     return health
