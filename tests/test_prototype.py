@@ -10,12 +10,35 @@ class FakeSpec:
     name: str = "builder-a"
 
 
+def _instrumented_html(extra_script: str = "") -> str:
+    return (
+        '<!doctype html><html><body><canvas id=c></canvas><p>WASD + SPACE</p><script>'
+        'c.width=320;c.height=180;'
+        "window.__GAME_ENGINE_TELEMETRY__={schema_version:'0.1',"
+        "snapshot:()=>({elapsed_ms:0,tick:0,state:'playing',alive:true,game_over:false,score:0,progress:0,"
+        "restart_count:0,entity_count:1,action_count:0,last_action_ms:null,core_mechanic_activations:0,"
+        "progression_transitions:0,state_hash:'fresh'}),events:()=>[]};"
+        + extra_script
+        + '</script></body></html>'
+    )
+
+
 class FakeBuilder:
     name = "builder-a"
 
     def complete(self, system: str, prompt: str) -> str:
         assert "Output HTML only" in prompt
-        return '<!doctype html><html><body><canvas id=c></canvas><p>WASD + SPACE</p><script>c.width=320;c.height=180</script></body></html>'
+        assert "window.__GAME_ENGINE_TELEMETRY__" in prompt
+        assert "DO NOT call Math.random()" in prompt
+        assert "before expensive evaluation" in prompt
+        return _instrumented_html()
+
+
+class BrokenContractBuilder:
+    name = "broken-builder"
+
+    def complete(self, system: str, prompt: str) -> str:
+        return '<!doctype html><html><body><canvas id=c></canvas><script>let x=Math.random()</script></body></html>'
 
 
 class SequenceBuilder:
@@ -66,6 +89,8 @@ def test_prototype_forge_writes_and_packages_only_game_files(tmp_path):
     assert row.response_format == "raw-html"
     assert row.raw_response_path
     assert row.game_spec_path
+    assert row.source_falsification_path
+    assert row.source_falsification_blockers == 0
     assert row.recovery_attempted is False
     assert (tmp_path / "builds.json").exists()
     assert (tmp_path / "game-spec.json").exists()
@@ -74,9 +99,28 @@ def test_prototype_forge_writes_and_packages_only_game_files(tmp_path):
         assert zf.namelist() == ["index.html"]
 
 
+def test_source_contract_blocker_prevents_packaging_and_browser_eligibility(tmp_path):
+    row = PrototypeForge([(FakeSpec("broken"), BrokenContractBuilder())], max_workers=1).build(
+        Brief(theme="Unicorns and Rainbows", size_limit_bytes=2048), _concept(), tmp_path
+    )[0]
+
+    assert row.ok is False
+    assert row.build_id != "failed"
+    assert row.source_dir is not None
+    assert row.raw_response_path is not None
+    assert row.source_falsification_path is not None
+    assert row.source_falsification_blockers >= 2
+    assert row.zip_path is None
+    assert row.compressed_bytes is None
+    assert "SourceFalsificationError" in row.error
+    assert "nondeterministic_rng" in row.error
+    assert "missing_telemetry_contract" in row.error
+    assert not (tmp_path / "dist").exists()
+
+
 def test_truncated_html_gets_one_full_document_recovery(tmp_path):
     truncated = "<!doctype html><html><body><canvas></canvas><script>let x="
-    complete = "<!doctype html><html><body><canvas></canvas><script>let x=1</script></body></html>"
+    complete = _instrumented_html("let x=1")
     client = SequenceBuilder([truncated, complete])
 
     row = PrototypeForge([(FakeSpec(), client)], max_workers=1).build(
@@ -89,6 +133,7 @@ def test_truncated_html_gets_one_full_document_recovery(tmp_path):
     assert row.raw_response_path and "initial" in row.raw_response_path
     assert row.recovery_raw_response_path and "recovery" in row.recovery_raw_response_path
     assert row.response_format == "recovered-raw-html"
+    assert row.source_falsification_blockers == 0
     assert any("truncation recovery" in warning for warning in row.warnings)
 
 
