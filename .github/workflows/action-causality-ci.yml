@@ -1,0 +1,112 @@
+name: Action Causality CI
+
+on:
+  push:
+    branches:
+      - agent/v0.3-gameplay-evidence
+    paths:
+      - '.github/workflows/action-causality-ci.yml'
+      - 'src/game_engine/action_causality.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'tests/game_corpus/pointer-controls/**'
+      - 'tests/game_corpus/action-noop/**'
+      - 'tests/test_action_causality.py'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'src/game_engine/action_causality.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'tests/game_corpus/pointer-controls/**'
+      - 'tests/game_corpus/action-noop/**'
+      - 'tests/test_action_causality.py'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action-causality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install evidence lab
+        run: python -m pip install -e '.[reality]' pytest
+
+      - name: Unit contracts
+        run: pytest -q
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run fully causal pointer controls
+        run: |
+          python -m game_engine.action_causality tests/game_corpus/pointer-controls \
+            --out /tmp/action-good \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Qualify every advertised pointer binding independently
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path('/tmp/action-good/action-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'pointer-controls')
+          assert build['qualified'] is True, build
+          by_action = {row['action_id']: row for row in build['actions']}
+          assert set(by_action) == {'pointer', 'primary', 'secondary'}, by_action
+          assert by_action['pointer']['trials'] == 4, by_action['pointer']
+          assert by_action['pointer']['passed_trials'] == 4, by_action['pointer']
+          assert by_action['primary']['passed_trials'] == 1, by_action['primary']
+          assert by_action['secondary']['passed_trials'] == 1, by_action['secondary']
+          assert all(row['no_op_fraction'] == 0.0 for row in by_action.values()), by_action
+          assert 'pointer-controls' in summary['action_causality_pass_build_ids'], summary
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Run acknowledged-but-dead secondary control
+        run: |
+          python -m game_engine.action_causality tests/game_corpus/action-noop \
+            --out /tmp/action-noop \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Reject one dead advertised binding despite working siblings
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path('tests/game_corpus/action-noop/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/action-noop/action-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'action-noop')
+          assert build['qualified'] is expected['build_qualified'], build
+          by_action = {row['action_id']: row for row in build['actions']}
+          assert set(by_action) == set(expected['required_actions']), by_action
+          failed = by_action[expected['failed_action']]
+          assert failed['ok'] is False, failed
+          assert failed['no_op_fraction'] == expected['secondary_no_op_fraction'], failed
+          trial = next(row for row in build['trials'] if row['action_id'] == expected['failed_action'])
+          assert trial['binding'] == expected['secondary_binding'], trial
+          assert trial['accepted'] is expected['secondary_accepted'], trial
+          assert trial['meaningful_state_change'] is expected['secondary_meaningful_state_change'], trial
+          assert trial['independent_visual_change'] is expected['secondary_independent_visual_change'], trial
+          assert expected['required_violation'] in '\n'.join(trial['violations']), trial
+          assert by_action['pointer']['ok'] is True, by_action['pointer']
+          assert by_action['primary']['ok'] is True, by_action['primary']
+          assert 'action-noop' in summary['action_causality_fail_build_ids'], summary
+          print(json.dumps(summary, indent=2))
+          PY
