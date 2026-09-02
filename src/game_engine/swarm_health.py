@@ -27,6 +27,22 @@ def provider_model_map(spec_groups: Iterable[Iterable[ProviderSpec]]) -> dict[st
     return result
 
 
+def _legacy_failure_class(row: dict[str, Any]) -> str:
+    error = str(row.get("error") or "unknown")
+    lowered = error.lower()
+    if "timeout" in lowered or "transport failure" in lowered:
+        return "transport"
+    if "http 429" in lowered:
+        return "rate_limit"
+    if "http 404" in lowered or "not found" in lowered:
+        return "endpoint_or_model_not_found"
+    if "http 5" in lowered:
+        return "server_5xx"
+    if "valueerror" in lowered or "json" in lowered or "schema" in lowered or "exceeds" in lowered:
+        return "content_or_schema"
+    return "other"
+
+
 def contribution_summary(contributions: list[dict[str, Any]], models: dict[str, str]) -> dict[str, Any]:
     successful = [row for row in contributions if row.get("ok")]
     covered_roles = sorted({str(row.get("role")) for row in successful if row.get("role")})
@@ -37,30 +53,22 @@ def contribution_summary(contributions: list[dict[str, Any]], models: dict[str, 
         if row.get("provider")
     })
     failures: dict[str, int] = {}
+    skipped: dict[str, int] = {}
     for row in contributions:
         if row.get("ok"):
             continue
-        error = str(row.get("error") or "unknown")
-        lowered = error.lower()
-        if "timeout" in lowered:
-            kind = "timeout"
-        elif "http 429" in lowered:
-            kind = "rate_limit"
-        elif "http 404" in lowered or "not found" in lowered:
-            kind = "endpoint_or_model_not_found"
-        elif "http 5" in lowered:
-            kind = "server_5xx"
-        elif "valueerror" in lowered or "json" in lowered or "schema" in lowered or "exceeds" in lowered:
-            kind = "content_or_schema"
-        else:
-            kind = "other"
-        failures[kind] = failures.get(kind, 0) + 1
+        explicit = str(row.get("failure_class") or "").strip()
+        kind = explicit or _legacy_failure_class(row)
+        target = skipped if row.get("skipped") else failures
+        target[kind] = target.get(kind, 0) + 1
     return {
         "successful_assignments": len(successful),
         "successful_providers": successful_providers,
         "successful_models": successful_models,
         "covered_roles": covered_roles,
         "failure_classes": failures,
+        "skipped_classes": skipped,
+        "skipped_assignments": sum(skipped.values()),
     }
 
 
@@ -111,6 +119,8 @@ def assess_primary_health(
         "successful_providers": summary["successful_providers"],
         "successful_models": summary["successful_models"],
         "failure_classes": summary["failure_classes"],
+        "skipped_classes": summary["skipped_classes"],
+        "skipped_assignments": summary["skipped_assignments"],
         "population_size": population_size,
         "deterministic_seed_count": deterministic_seed_count,
         "llm_expanded_population": llm_expanded_population,
@@ -156,8 +166,6 @@ def build_rescue_config(
         selected[spec.name].append(role)
         return True
 
-    # Fill missing evidence first. Universal critical roles get two-family redundancy
-    # when possible; the medium specialist remains a narrow one-owner recovery task.
     redundant_roles: list[str] = []
     for role in missing_order:
         candidates = [spec for spec in base_specs if role in active_by_name[spec.name]]
@@ -178,8 +186,6 @@ def build_rescue_config(
         names = {name for name, roles in selected.items() if roles}
         return [spec for spec in base_specs if spec.name in names]
 
-    # If the primary only has one model family, make sure the rescue plan actually
-    # calls a different model. Prefer a role already required by this brief.
     if need_model_diversity and not any(spec.model not in primary_models for spec in selected_specs()):
         novel = [spec for spec in base_specs if spec.model not in primary_models and active_by_name[spec.name]]
         novel.sort(key=lambda spec: spec.name)
@@ -189,9 +195,6 @@ def build_rescue_config(
             role = preferred[0] if preferred else active_by_name[spec.name][0]
             add(spec, role)
 
-    # A degraded swarm may have complete role coverage but still be below the five
-    # successful-assignment quorum. Plan just enough unique rescue calls that the
-    # quorum is reachable if they succeed.
     needed_calls = max(0, 5 - successful_assignments)
     while sum(len(roles) for roles in selected.values()) < needed_calls:
         candidates: list[tuple[bool, str, ProviderSpec, str]] = []
@@ -262,6 +265,8 @@ def assess_combined_health(
         "successful_providers": summary["successful_providers"],
         "successful_models": summary["successful_models"],
         "failure_classes": summary["failure_classes"],
+        "skipped_classes": summary["skipped_classes"],
+        "skipped_assignments": summary["skipped_assignments"],
     }
 
 
@@ -281,11 +286,6 @@ def write_primary_health_plan(
     output_dir: Path,
     deterministic_seed_count: int,
 ) -> dict[str, Any]:
-    """Persist primary health and the smallest rescue configuration.
-
-    A degraded primary is a valid intermediate result. It may advance only to rescue,
-    never directly to concept selection. A truly unusable primary fails closed.
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(manifest_path.read_text())
     primary_specs = load_provider_specs(primary_specs_path)
@@ -324,7 +324,6 @@ def write_combined_health(
     rescue_contributions_path: Path | None = None,
     rescue_specs_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Persist the final concept-stage health after optional targeted rescue."""
     output_dir.mkdir(parents=True, exist_ok=True)
     contribution_sets = [load_contributions(primary_contributions_path)]
     spec_groups = [load_provider_specs(primary_specs_path)]
