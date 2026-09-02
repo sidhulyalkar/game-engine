@@ -20,7 +20,7 @@
       "api_key_env": "NVIDIA_API_KEY",
       "roles": [],
       "temperature": 0.35,
-      "top_p": 0.9,
+      "top_p": null,
       "max_tokens": 4096,
       "timeout": 180,
       "retries": 1,
