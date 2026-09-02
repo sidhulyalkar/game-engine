@@ -1,4 +1,4 @@
-from game_engine.action_causality import assess_action_trial, split_action_trials
+from game_engine.action_causality import _pointer_setup_step, assess_action_trial, split_action_trials
 from game_engine.action_policy import compile_input_program
 
 
@@ -46,6 +46,20 @@ def test_input_program_splits_every_binding_direction_into_fresh_trial():
     assert trials[-1][-1].binding == "Space"
 
 
+def test_pointer_click_setup_is_preconditioned_but_pointer_motion_is_not():
+    actions = [
+        {"id": "aim", "kind": "pointer_move", "required": True},
+        {"id": "primary", "kind": "pointer_click", "bindings": ["PrimaryPointer"], "required": True},
+    ]
+    trials = split_action_trials(compile_input_program(actions, hold_ms=120))
+    motion_trial = next(trial for trial in trials if trial[-1].action_id == "aim")
+    click_trial = next(trial for trial in trials if trial[-1].action_id == "primary")
+    assert _pointer_setup_step(motion_trial) is None
+    setup = _pointer_setup_step(click_trial)
+    assert setup is not None
+    assert setup.pointer_target == (0.5, 0.5)
+
+
 def test_acknowledged_but_bookkeeping_only_input_is_rejected():
     before = snapshot()
     after = snapshot(elapsed_ms=180.0, action_count=1, last_action_ms=140.0)
@@ -54,6 +68,32 @@ def test_acknowledged_but_bookkeeping_only_input_is_rejected():
         after,
         before_events=[],
         after_events=[{"type": "action_accepted"}],
+        before_visible_hash="same",
+        after_visible_hash="same",
+        required=True,
+    )
+    assert ok is False
+    assert accepted is True
+    assert meaningful is False
+    assert visible is False
+    assert "required advertised binding produced no meaningful gameplay effect" in violations
+    assert "input was acknowledged but only bookkeeping changed" in warnings
+
+
+def test_self_reported_core_activation_and_state_hash_cannot_certify_effect():
+    before = snapshot()
+    after = snapshot(
+        elapsed_ms=180.0,
+        action_count=1,
+        last_action_ms=140.0,
+        core_mechanic_activations=1,
+        state_hash="claimed-effect",
+    )
+    ok, accepted, meaningful, visible, violations, warnings = assess_action_trial(
+        before,
+        after,
+        before_events=[],
+        after_events=[{"type": "action_accepted"}, {"type": "core_mechanic_activation"}],
         before_visible_hash="same",
         after_visible_hash="same",
         required=True,
