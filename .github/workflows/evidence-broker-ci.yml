@@ -3,9 +3,10 @@ name: Evidence Broker CI
 on:
   push:
     branches:
-      - agent/v0.5-evidence-broker
+      - agent/v0.6-evidence-broker-integration
     paths:
       - '.github/workflows/evidence-broker-ci.yml'
+      - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_broker.py'
       - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
@@ -19,9 +20,11 @@ on:
       - 'tests/game_corpus/restart-good/**'
       - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
+      - 'tests/test_autonomous_behavioral_gate.py'
       - 'pyproject.toml'
   pull_request:
     paths:
+      - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_broker.py'
       - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
@@ -35,6 +38,7 @@ on:
       - 'tests/game_corpus/restart-good/**'
       - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
+      - 'tests/test_autonomous_behavioral_gate.py'
       - 'pyproject.toml'
 
 permissions:
@@ -84,28 +88,41 @@ jobs:
               (p/'reality.json').write_text(json.dumps(rows))
           PY
 
-      - name: Run behavioral evidence broker
+      - name: Run explicit behavioral evidence broker
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           from game_engine.evidence_broker import EvidenceBroker
 
-          result = EvidenceBroker(browsers=('chromium',), sample_interval_ms=120).run(
+          broker = EvidenceBroker(browsers=('chromium',), sample_interval_ms=120)
+          good = broker.run(
               Path('tests/game_corpus/restart-good'),
-              Path('/tmp/broker'),
+              Path('/tmp/broker-good'),
               Path('/tmp/reality-good'),
           )
-          print(json.dumps(result, indent=2))
-          assert result['all_probes_completed'] is True, result
-          assert result['behaviorally_qualified_build_ids'] == ['restart-good'], result
-          assert result['llm_critic_eligible_build_ids'] == ['restart-good'], result
-          q = json.loads(Path('/tmp/broker/critic-reality/qualification.json').read_text())
-          assert q['full_pass_build_ids'] == ['restart-good'], q
-          assert q['behavioral_gate_applied'] is True, q
+          stale = broker.run(
+              Path('tests/game_corpus/restart-stale'),
+              Path('/tmp/broker-stale'),
+              Path('/tmp/reality-stale'),
+          )
+          print(json.dumps({'good':good, 'stale':stale}, indent=2))
+          assert good['all_probes_completed'] is True, good
+          assert good['behaviorally_qualified_build_ids'] == ['restart-good'], good
+          assert good['llm_critic_eligible_build_ids'] == ['restart-good'], good
+          assert stale['all_probes_completed'] is True, stale
+          assert stale['behaviorally_qualified_build_ids'] == [], stale
+          assert stale['behavioral_repair_build_ids'] == ['restart-stale'], stale
+          assert stale['llm_critic_eligible_build_ids'] == [], stale
+          good_q = json.loads(Path('/tmp/broker-good/critic-reality/qualification.json').read_text())
+          stale_q = json.loads(Path('/tmp/broker-stale/critic-reality/qualification.json').read_text())
+          assert good_q['full_pass_build_ids'] == ['restart-good'], good_q
+          assert stale_q['full_pass_build_ids'] == [], stale_q
+          assert good_q['behavioral_gate_applied'] is True, good_q
+          assert stale_q['behavioral_gate_applied'] is True, stale_q
           PY
 
-      - name: Prove source critics run only after behavior qualifies
+      - name: Prove filtered reality controls critic spend
         run: |
           python - <<'PY'
           import json
@@ -140,21 +157,24 @@ jobs:
           good_a, good_b = Critic(), Critic()
           good = SourceGameplayLab([(Spec('critic-a'), good_a), (Spec('critic-b'), good_b)], max_workers=2).run(
               brief, concept,
-              Path('tests/game_corpus/restart-good'), Path('/tmp/audit-good'), Path('/tmp/reality-good')
+              Path('tests/game_corpus/restart-good'), Path('/tmp/audit-good'),
+              Path('/tmp/broker-good/critic-reality')
           )
           assert good_a.calls == 1 and good_b.calls == 1, (good_a.calls, good_b.calls, good)
-          assert good['behaviorally_qualified_build_ids'] == ['restart-good'], good
           assert good['llm_critic_eligible_build_ids'] == ['restart-good'], good
           assert good['advance_build_ids'] == ['restart-good'], good
 
           stale_a, stale_b = Critic(), Critic()
-          stale = SourceGameplayLab([(Spec('critic-a'), stale_a), (Spec('critic-b'), stale_b)], max_workers=2).run(
-              brief, concept,
-              Path('tests/game_corpus/restart-stale'), Path('/tmp/audit-stale'), Path('/tmp/reality-stale')
-          )
-          assert stale_a.calls == 0 and stale_b.calls == 0, (stale_a.calls, stale_b.calls, stale)
-          assert stale['llm_critic_eligible_build_ids'] == [], stale
-          assert stale['behavioral_repair_build_ids'] == ['restart-stale'], stale
-          assert stale['advance_build_ids'] == [], stale
-          print(json.dumps({'good':good,'stale':stale}, indent=2))
+          try:
+              SourceGameplayLab([(Spec('critic-a'), stale_a), (Spec('critic-b'), stale_b)], max_workers=2).run(
+                  brief, concept,
+                  Path('tests/game_corpus/restart-stale'), Path('/tmp/audit-stale'),
+                  Path('/tmp/broker-stale/critic-reality')
+              )
+          except ValueError as exc:
+              assert 'no cross-browser-qualified builds' in str(exc), exc
+          else:
+              raise AssertionError('behaviorally failed build unexpectedly reached source audit')
+          assert stale_a.calls == 0 and stale_b.calls == 0, (stale_a.calls, stale_b.calls)
+          print(json.dumps({'good':good, 'stale_critic_calls':[stale_a.calls, stale_b.calls]}, indent=2))
           PY
