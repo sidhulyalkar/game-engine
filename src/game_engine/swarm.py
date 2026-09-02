@@ -6,6 +6,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from .agents import CATEGORY_SPECIALISTS, STUDIO_ROLES, AgentRole
 from .evaluators import deduplicate, judge
@@ -24,6 +25,8 @@ class SwarmContribution:
     concept_ids: list[str]
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    raw_response_path: str | None = None
+    response_sha256: str | None = None
 
 
 def _extract_json(text: str) -> dict:
@@ -99,13 +102,34 @@ def _complete_limited(semaphore: threading.Semaphore, client: LLMClient, system:
         return client.complete(system, prompt)
 
 
+def _safe_fragment(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip()).strip("-.")
+    return cleaned[:80] or "unknown"
+
+
+def _persist_raw_response(raw_dir: Path | None, provider: str, role: str, response: str) -> tuple[str | None, str]:
+    digest = hashlib.sha256(response.encode()).hexdigest()
+    if raw_dir is None:
+        return None, digest
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    path = raw_dir / f"{_safe_fragment(provider)}--{_safe_fragment(role)}--{digest[:16]}.txt"
+    path.write_text(response)
+    return str(path), digest
+
+
 class SwarmStudio:
     def __init__(self, clients: list[tuple[object, LLMClient]], seed: int = 13, max_workers: int = 8):
         self.clients = clients
         self.seed = seed
         self.max_workers = max_workers
 
-    def ideate(self, brief: Brief, deterministic_seeds: int = 16, concepts_per_call: int = 3) -> tuple[list[Concept], list[ScoreCard], list[SwarmContribution]]:
+    def ideate(
+        self,
+        brief: Brief,
+        deterministic_seeds: int = 16,
+        concepts_per_call: int = 3,
+        raw_dir: Path | None = None,
+    ) -> tuple[list[Concept], list[ScoreCard], list[SwarmContribution]]:
         seeds = procedural_concepts(brief, count=deterministic_seeds, seed=self.seed)
         roles = {r.name: r for r in _roles_for_brief(brief)}
         jobs: list[tuple[object, LLMClient, AgentRole, list[Concept]]] = []
@@ -144,8 +168,14 @@ class SwarmStudio:
             for future in as_completed(future_map):
                 spec, client, role = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+                raw_response_path: str | None = None
+                response_sha256: str | None = None
                 try:
-                    payload = _extract_json(future.result())
+                    response = future.result()
+                    raw_response_path, response_sha256 = _persist_raw_response(
+                        raw_dir, provider_name, role.name, response
+                    )
+                    payload = _extract_json(response)
                     items = payload.get("concepts", [])
                     if not isinstance(items, list):
                         raise ValueError("concepts must be a list")
@@ -162,13 +192,25 @@ class SwarmStudio:
                         detail = "; ".join(warnings) if warnings else "provider returned no concepts"
                         raise ValueError(detail)
                     generated.extend(concepts)
-                    contributions.append(
-                        SwarmContribution(provider_name, role.name, True, [c.concept_id for c in concepts], warnings=warnings)
-                    )
+                    contributions.append(SwarmContribution(
+                        provider=provider_name,
+                        role=role.name,
+                        ok=True,
+                        concept_ids=[c.concept_id for c in concepts],
+                        warnings=warnings,
+                        raw_response_path=raw_response_path,
+                        response_sha256=response_sha256,
+                    ))
                 except Exception as exc:
-                    contributions.append(
-                        SwarmContribution(provider_name, role.name, False, [], f"{type(exc).__name__}: {exc}")
-                    )
+                    contributions.append(SwarmContribution(
+                        provider=provider_name,
+                        role=role.name,
+                        ok=False,
+                        concept_ids=[],
+                        error=f"{type(exc).__name__}: {exc}",
+                        raw_response_path=raw_response_path,
+                        response_sha256=response_sha256,
+                    ))
 
         population = deduplicate(seeds + generated, threshold=0.84)
         scorecards = [judge(c, brief, population) for c in population]
@@ -178,8 +220,14 @@ class SwarmStudio:
         return ranked, scorecards, contributions
 
     def run(self, brief: Brief, output_dir, deterministic_seeds: int = 16, concepts_per_call: int = 3) -> dict:
+        output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        concepts, scores, contributions = self.ideate(brief, deterministic_seeds, concepts_per_call)
+        concepts, scores, contributions = self.ideate(
+            brief,
+            deterministic_seeds,
+            concepts_per_call,
+            raw_dir=output_dir / "raw",
+        )
         score_map = {s.concept_id: s for s in scores}
         successful = [c for c in contributions if c.ok]
         successful_providers = sorted({c.provider for c in successful})
