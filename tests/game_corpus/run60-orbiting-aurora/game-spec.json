@@ -1,0 +1,68 @@
+{
+  "spec_version": "0.1",
+  "source_concept_id": "b30d4466",
+  "title": "Orbiting Aurora",
+  "primary_category": "desktop",
+  "interaction_invariant": "Player taps left/right to nudge the unicorn’s tangential thrust, causing elastic bounce off the central star and orbiting crystal barriers. Each collision conserves momentum, altering speed and radius. Safe passages without impact increase a tension counter; after ten seconds of safety, new hazards spawn and the safe orbital band narrows, forcing riskier maneuvers.",
+  "player_goal": "Maintain orbit as long as possible, scoring points for safe passages before tension spikes.",
+  "controls": "Arrow left/right to apply tangential thrust; up arrow to briefly boost radial outward; down arrow to brake slightly.",
+  "core_loop": [
+    "Nudge tangential thrust to maintain orbit and avoid obstacles.",
+    "Accumulate safe-pass seconds to build tension.",
+    "When tension peaks, new hazards spawn and the safe orbital band narrows.",
+    "Survive the heightened period to reset tension and increase score."
+  ],
+  "prototype_scope": [
+    "One arena and one complete playable run; prove the core interaction before breadth.",
+    "At most one enemy/boss archetype plus one escalation rule in this slice.",
+    "First meaningful player agency within 3 seconds after start/input unlock.",
+    "Target a 30-60 second representative run with immediate restart.",
+    "Do not implement meta progression, multiple levels, daily challenges, or category expansions."
+  ],
+  "state_machine": {
+    "states": ["playing", "dead", "won"],
+    "start": "playing",
+    "restart": "dead/won -> fresh playing state with score, timers, entities, and input state reset"
+  },
+  "timing_contract": {
+    "simulation": "fixed-step 60 Hz accumulator or rigorously delta-time-scaled variable step",
+    "delta_time_seconds": true,
+    "max_frame_dt_seconds": 0.05,
+    "frame_rate_independent_damping": true,
+    "deterministic_seed": true
+  },
+  "state_bounds": {
+    "hazards_or_enemies": 32,
+    "particles_or_trail_points": 256,
+    "timers_or_scheduled_events": 32,
+    "simultaneous_audio_voices": 16
+  },
+  "sensory_contract": {
+    "visual": "The unicorn, star, and barriers are drawn as procedurally generated rainbow-gradient shapes using sine-based radial shaders; trails accumulate as additive bloom.",
+    "audio": "Each elastic bounce emits a soft bell tone whose frequency scales with impact speed; tension buildup raises a low-drone pad, while hazard spawn triggers a rising arpeggio.",
+    "readability": "Core mechanic state, danger, success, and failure must be visible without reading debug text."
+  },
+  "telemetry_contract": {
+    "snapshot": ["elapsed_ms", "alive", "game_over", "score", "progress", "restart_count", "entity_count", "action_count", "last_action_ms", "state_hash"],
+    "events": ["run_start", "action_accepted", "progress_change", "damage_or_death", "restart", "core_mechanic_activation", "progression_transition"]
+  },
+  "byte_priorities": [
+    "core interaction correctness and feel",
+    "readable themed geometry and feedback",
+    "procedural audio tied to state",
+    "one escalation rule",
+    "polish only after the above survive browser/play evidence"
+  ],
+  "non_goals": [
+    "remote networking, fetch/post persistence, matchmaking, or leaderboards",
+    "requiring another human player; use a deterministic local echo/AI if a partner is intrinsic",
+    "WebXR session/controller/hand-tracking integration",
+    "touch-specific UI beyond basic pointer compatibility",
+    "mobile adaptation",
+    "online adaptation",
+    "webxr adaptation",
+    "more than one enemy/boss archetype in the first prototype",
+    "large shipped media assets",
+    "code golf before gameplay qualification"
+  ]
+}
