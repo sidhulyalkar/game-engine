@@ -98,33 +98,43 @@ def assess_primary_health(
     population_size = int(manifest.get("population_size", 0))
     winner_present = bool(manifest.get("winner_id"))
     llm_expanded_population = population_size > deterministic_seed_count
+    deterministic_substrate_usable = population_size >= deterministic_seed_count and winner_present
     diversity = _diversity_fields(summary)
 
-    usable = (
+    primary_llm_usable = (
         bool(summary["successful_models"])
         and summary["successful_assignments"] >= 2
         and llm_expanded_population
         and winner_present
     )
+    # `usable` means the tournament has a valid substrate from which it can continue.
+    # A complete primary-model outage is therefore recoverable when deterministic
+    # exploration still produced its expected population and winner. No LLM evidence
+    # is credited here: rescue must still establish the final hard coverage quorum.
+    usable = primary_llm_usable or deterministic_substrate_usable
     coverage_quorum = (
-        usable
+        primary_llm_usable
         and summary["successful_assignments"] >= 5
         and not missing
     )
     fully_qualified = coverage_quorum and diversity["heterogeneous_models"]
     if fully_qualified:
         status = "qualified"
-    elif usable:
+    elif primary_llm_usable:
         status = "degraded"
+    elif deterministic_substrate_usable:
+        status = "recoverable"
     else:
         status = "failed"
 
     return {
         "status": status,
         "usable": usable,
+        "primary_llm_usable": primary_llm_usable,
+        "deterministic_substrate_usable": deterministic_substrate_usable,
         "qualified": fully_qualified,
         "coverage_quorum": coverage_quorum,
-        "rescue_required": status == "degraded",
+        "rescue_required": status in {"degraded", "recoverable"},
         "required_roles": required,
         "covered_roles": summary["covered_roles"],
         "missing_roles": missing,
@@ -240,6 +250,8 @@ def build_rescue_config(
         not need_model_diversity
         or any(spec.model not in primary_models for spec in selected_specs())
     )
+    planned_assignments = sum(len(roles) for roles in selected.values())
+    planned_total_assignments = successful_assignments + planned_assignments
     return {
         "providers": providers,
         "rescue_reason": {
@@ -250,7 +262,9 @@ def build_rescue_config(
             "novel_model_plannable": novel_model_plannable,
             "primary_models": sorted(primary_models),
             "primary_successful_assignments": successful_assignments,
-            "planned_assignments": sum(len(roles) for roles in selected.values()),
+            "planned_assignments": planned_assignments,
+            "planned_total_assignments": planned_total_assignments,
+            "assignment_quorum_plannable": planned_total_assignments >= 5,
         },
     }
 
@@ -344,9 +358,18 @@ def write_primary_health_plan(
         not health["rescue_required"]
         or (
             provider_count > 0
-            and (not coverage_repair_required or not reason.get("uncovered_missing_roles"))
+            and (
+                not coverage_repair_required
+                or (
+                    not reason.get("uncovered_missing_roles")
+                    and bool(reason.get("assignment_quorum_plannable", False))
+                )
+            )
         )
     )
+    if health["status"] == "recoverable" and not health["rescue_plannable"]:
+        health["status"] = "failed"
+        health["usable"] = False
     health["rescue_config_path"] = str(rescue_path)
     (output_dir / "primary-health.json").write_text(json.dumps(health, indent=2) + "\n")
     return health
