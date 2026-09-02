@@ -19,37 +19,16 @@ class SourceFinding:
 
 
 _NUMBER_WORDS = {
-    "zero": 0,
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-    "eleven": 11,
-    "twelve": 12,
-    "thirteen": 13,
-    "fourteen": 14,
-    "fifteen": 15,
-    "sixteen": 16,
-    "seventeen": 17,
-    "eighteen": 18,
-    "nineteen": 19,
-    "twenty": 20,
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20,
 }
 
 
 def _function_body(source: str, name: str) -> str | None:
-    """Extract a classic `function name(...) { ... }` body with light JS lexing.
-
-    Generated 13KB entries overwhelmingly use classic functions, and a balanced scan
-    is substantially safer than a single greedy regex because comments/template text
-    can contain braces. This is deliberately not a full JavaScript parser.
-    """
+    """Extract a classic `function name(...) { ... }` body with light JS lexing."""
     match = re.search(rf"\bfunction\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", source)
     if not match:
         return None
@@ -115,8 +94,7 @@ def _fixed_hz(game_spec: dict[str, Any]) -> float | None:
 
 def _representative_max_seconds(game_spec: dict[str, Any]) -> float | None:
     for row in game_spec.get("prototype_scope") or []:
-        text = str(row)
-        match = re.search(r"(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*second", text, re.I)
+        match = re.search(r"(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*second", str(row), re.I)
         if match:
             return float(match.group(2))
     return None
@@ -139,15 +117,7 @@ def _intended_escalation_seconds(game_spec: dict[str, Any]) -> float | None:
 
 
 def _timer_counter_cycles(source: str) -> list[dict[str, float | str]]:
-    """Infer simple nested timer->counter escalation cycles.
-
-    Pattern covered intentionally mirrors compact generated game code:
-      timer += delta
-      if (timer >= A) { counter = Math.min(..., counter + B); timer = 0;
-        if (counter >= C) { ... escalation ... }
-      }
-    The result is an estimated earliest escalation time A * ceil(C/B).
-    """
+    """Infer simple nested timer->counter escalation cycles."""
     results: list[dict[str, float | str]] = []
     accumulation = re.compile(r"(?P<ref>(?:[A-Za-z_$]\w*\.)*[A-Za-z_$]\w*)\s*\+=\s*(?:delta|dt)\s*;")
     for match in accumulation.finditer(source):
@@ -161,7 +131,6 @@ def _timer_counter_cycles(source: str) -> list[dict[str, float | str]]:
         timer_seconds = float(threshold.group(1))
         threshold_end = match.end() + threshold.end()
         segment = source[threshold_end:threshold_end + 1200]
-
         counter_match = re.search(
             r"(?P<ref>(?:[A-Za-z_$]\w*\.)*[A-Za-z_$]\w*)\s*=\s*Math\.min\(\s*[^,]+,\s*(?P=ref)\s*\+\s*(?P<step>\d+(?:\.\d+)?)\s*\)",
             segment,
@@ -177,22 +146,20 @@ def _timer_counter_cycles(source: str) -> list[dict[str, float | str]]:
         step = float(counter_match.group("step"))
         if step <= 0:
             continue
-        counter_tail = segment[counter_match.end():]
         counter_threshold = re.search(
             rf"if\s*\(\s*{re.escape(counter_ref)}\s*>=\s*(\d+(?:\.\d+)?)\s*\)",
-            counter_tail,
+            segment[counter_match.end():],
         )
         if not counter_threshold:
             continue
         target = float(counter_threshold.group(1))
-        cycles = math.ceil(target / step)
         results.append({
             "timer": timer_ref,
             "counter": counter_ref,
             "timer_seconds": timer_seconds,
             "counter_target": target,
             "counter_step": step,
-            "estimated_seconds": timer_seconds * cycles,
+            "estimated_seconds": timer_seconds * math.ceil(target / step),
         })
     return results
 
@@ -226,16 +193,85 @@ def _hazard_lifetime_travel(source: str, hz: float | None) -> list[dict[str, flo
     return rows
 
 
+def _seed_declaration(source: str) -> tuple[str, str] | None:
+    match = re.search(
+        r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*seed[\w$]*)\s*=\s*([^;\n]+)",
+        source,
+        re.I,
+    )
+    return (match.group(1), match.group(2).strip()) if match else None
+
+
+def _rng_state_is_constant(source: str) -> tuple[bool, str | None]:
+    declaration = _seed_declaration(source)
+    body = _function_body(source, "rng")
+    if declaration is None or body is None:
+        return False, None
+    name, _ = declaration
+    if not re.search(rf"\b{re.escape(name)}\b", body):
+        return False, None
+    mutation = re.search(
+        rf"\b{re.escape(name)}\s*(?:=|\+=|-=|\*=|/=|%=|\+\+|--)",
+        body,
+    )
+    return mutation is None, name
+
+
+def _restart_spawns_duplicate_raf(source: str, loop_body: str | None) -> str | None:
+    if not loop_body:
+        return None
+    # A loop that always schedules its successor is already alive during ordinary
+    # restart input. A restart/start function that also schedules loop creates a
+    # second RAF chain. Conditional `if(playing) requestAnimationFrame(loop)` loops
+    # are excluded because a stopped chain may legitimately need resuming.
+    unconditional = re.search(
+        r"(?:^|[;{}]\s*)requestAnimationFrame\s*\(\s*loop\s*\)\s*;",
+        loop_body,
+    )
+    if not unconditional:
+        return None
+    for name in ("start", "reset", "restart"):
+        body = _function_body(source, name)
+        if not body or not re.search(r"requestAnimationFrame\s*\(\s*loop\s*\)", body):
+            continue
+        handler = re.search(
+            rf"addEventListener\s*\([^\n;]*[\s\S]{{0,420}}?\b{re.escape(name)}\s*\(\s*\)",
+            source,
+        )
+        if handler:
+            return name
+    return None
+
+
 def analyze_source(html: str, game_spec: dict[str, Any]) -> dict[str, Any]:
     findings: list[SourceFinding] = []
     timing = game_spec.get("timing_contract") or {}
+    deterministic = bool(timing.get("deterministic_seed"))
 
-    if bool(timing.get("deterministic_seed")) and re.search(r"\bMath\.random\s*\(", html):
+    if deterministic and re.search(r"\bMath\.random\s*\(", html):
         findings.append(SourceFinding(
             code="nondeterministic_rng",
             severity="blocker",
             evidence="GameSpec requires deterministic_seed but source calls Math.random().",
             player_impact="Replays, debugging, and cross-run evidence cannot reproduce the same game state.",
+        ))
+
+    seed_decl = _seed_declaration(html)
+    if deterministic and seed_decl and re.search(r"\b(?:Date\.now|performance\.now)\s*\(", seed_decl[1]):
+        findings.append(SourceFinding(
+            code="wall_clock_seed",
+            severity="blocker",
+            evidence=f"GameSpec requires deterministic_seed but {seed_decl[0]} is initialized from wall-clock time.",
+            player_impact="Identical runs can start from different random states, invalidating replay and cross-run comparisons.",
+        ))
+
+    constant_rng, constant_seed_name = _rng_state_is_constant(html)
+    if constant_rng:
+        findings.append(SourceFinding(
+            code="constant_prng_state",
+            severity="major",
+            evidence=f"rng() reads {constant_seed_name} but never mutates that PRNG state.",
+            player_impact="Every RNG call can return the same value, collapsing intended spawn/visual variation.",
         ))
 
     if game_spec.get("telemetry_contract") and "__GAME_ENGINE_TELEMETRY__" not in html:
@@ -278,6 +314,15 @@ def analyze_source(html: str, game_spec: dict[str, Any]) -> dict[str, Any]:
                     evidence="Main loop stops scheduling RAF when playing=false, but reset/restart does not schedule loop again.",
                     player_impact="The UI can claim restart while the simulation remains frozen after death.",
                 ))
+
+    duplicate_restart = _restart_spawns_duplicate_raf(html, loop_body)
+    if duplicate_restart:
+        findings.append(SourceFinding(
+            code="restart_spawns_duplicate_raf",
+            severity="blocker",
+            evidence=f"loop() schedules RAF unconditionally and {duplicate_restart}() schedules loop again from player restart input.",
+            player_impact="Each restart can add another simulation loop, multiplying game speed and update side effects.",
+        ))
 
     run_max = _representative_max_seconds(game_spec)
     intended = _intended_escalation_seconds(game_spec)
