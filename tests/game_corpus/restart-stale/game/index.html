@@ -1,0 +1,7 @@
+<!doctype html><html><body style="margin:0;background:#111"><canvas id="c" width="320" height="180"></canvas><script>
+const x=c.getContext('2d');let px=80,score=0,progress=0,actions=0,core=0,restarts=0,start=performance.now(),lastAction=null,events=[{type:'run_start',at_ms:0}];
+function now(){return performance.now()-start}function event(type){events.push({type,at_ms:now()});if(events.length>256)events.shift()}
+function draw(){x.fillStyle='#111';x.fillRect(0,0,320,180);x.fillStyle=progress?'#f5c':'#5cf';x.beginPath();x.arc(px,90,16,0,7);x.fill();x.fillStyle='#fff';x.fillText('score '+score,8,16)}draw();
+addEventListener('keydown',e=>{if(e.code==='Space'){actions++;core++;score=10;progress=.5;px=240;lastAction=now();event('action_accepted');event('progress_change');event('core_mechanic_activation');draw()}if(e.key.toLowerCase()==='r'){restarts++;start=performance.now();event('restart')}});
+window.__GAME_ENGINE_TELEMETRY__={schema_version:'0.1',snapshot:()=>({elapsed_ms:now(),tick:0,state:'playing',alive:true,game_over:false,score,progress,restart_count:restarts,entity_count:1,action_count:actions,last_action_ms:lastAction,core_mechanic_activations:core,progression_transitions:0,state_hash:[px,score,progress,actions,core].join(':')}),events:()=>events};
+</script></body></html>
