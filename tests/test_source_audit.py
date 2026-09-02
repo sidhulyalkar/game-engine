@@ -27,6 +27,7 @@ def test_two_clean_critics_can_advance():
     assert result.status == "advance"
     assert result.blockers == 0
     assert result.critic_count == 2
+    assert result.failed_critic_count == 0
 
 
 def test_blocker_prevents_advance():
@@ -39,13 +40,34 @@ def test_blocker_prevents_advance():
     assert result.blockers == 1
 
 
-def test_no_successful_critics_rejects():
+def test_no_successful_critics_is_insufficient_evidence_not_rejection():
     result = aggregate_audits(
         {"build_id": "abc", "provider": "builder"},
         [CriticAudit(provider="a", build_id="abc", ok=False, error="timeout")],
     )
-    assert result.status == "reject"
+    assert result.status == "insufficient_evidence"
     assert result.critic_count == 0
+    assert result.failed_critic_count == 1
+
+
+def test_one_successful_critic_is_still_insufficient_for_independent_quorum():
+    result = aggregate_audits(
+        {"build_id": "abc", "provider": "builder"},
+        [audit("a", "reject", 2.0), CriticAudit(provider="b", build_id="abc", ok=False, error="schema")],
+    )
+    assert result.status == "insufficient_evidence"
+    assert result.critic_count == 1
+    assert result.failed_critic_count == 1
+    assert result.verdict_votes["reject"] == 1
+
+
+def test_two_independent_rejects_are_candidate_evidence():
+    result = aggregate_audits(
+        {"build_id": "abc", "provider": "builder"},
+        [audit("a", "reject", 2.0), audit("b", "reject", 3.0)],
+    )
+    assert result.status == "reject"
+    assert result.critic_count == 2
 
 
 def test_browser_qualification_filters_expensive_critic_field(tmp_path):
