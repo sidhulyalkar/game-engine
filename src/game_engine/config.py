@@ -16,7 +16,7 @@ class ProviderSpec:
     roles: list[str]
     enabled: bool = True
     temperature: float = 0.9
-    top_p: float = 0.95
+    top_p: float | None = 0.95
     max_tokens: int = 8192
     timeout: int = 180
     retries: int = 3
