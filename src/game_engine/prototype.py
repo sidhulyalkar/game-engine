@@ -6,6 +6,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .game_spec import compile_game_spec
 from .packaging import package_game
@@ -27,12 +28,13 @@ class PrototypeResult:
     raw_response_path: str | None = None
     response_format: str | None = None
     game_spec_path: str | None = None
+    completion_metadata: dict[str, Any] | None = None
     error: str | None = None
 
 
 def builder_prompt(brief: Brief, spec: GameSpec) -> tuple[str, str]:
-    system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied GameSpec. Correctness, game feel, and readability come before code golf. Return ONLY the complete standalone HTML document. Do not return JSON, markdown fences, explanations, or design notes."""
-    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and ends with </html>\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial headroom under {brief.size_limit_bytes} compressed bytes\n\nOutput HTML only."""
+    system = """You are the implementation engineer in a 13KB web-game studio. Build the smallest genuinely playable expression of the supplied GameSpec. Correctness, game feel, and completeness come before feature breadth or code golf. Return ONLY the complete standalone HTML document. Do not return JSON, markdown fences, explanations, or design notes."""
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), indent=2)}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), indent=2)}\n\nBuild exactly one runnable single-file prototype. Requirements:\n- response begins with <!doctype html> or <html and MUST end with </html>\n- always finish </script>, </body>, and </html>; never spend the output budget on extra breadth and leave the document incomplete\n- prefer a complete simplified implementation over an unfinished ambitious one\n- target roughly <=9000 source characters for this first evidence prototype; simplify secondary enemies/effects before exceeding that target\n- top-level index.html semantics, no build step\n- no remote images/fonts/audio/scripts/network dependency\n- implement the PRIMARY CATEGORY only; every GameSpec non-goal stays out\n- Canvas 2D and WebAudio are preferred\n- controls are stated on screen in very little text\n- gameplay begins immediately or with one obvious click/key\n- fast coherent restart\n- preserve the GameSpec interaction invariant rather than substituting an easier generic mechanic\n- make the themed subject visually recognizable; avoid placeholder circles unless abstraction is itself the design\n- use a fixed 60 Hz simulation or delta-time in SECONDS for every rate; damping/decay must be frame-rate independent\n- clamp pathological frame delta to <= {spec.timing_contract.get('max_frame_dt_seconds', 0.05)} seconds\n- all spawned entities, particles, trails, timers, arrays, and audio nodes must obey the GameSpec bounds\n- use readable prototype code and correct object/property comparisons; code golf happens later\n- verify collision, scoring/progress, death/win, and restart against the actual variable types you create\n- implement only the one-arena playable slice; do not spend tokens on multiple levels, networking, persistence, menus, or meta systems\n- target substantial compressed headroom under {brief.size_limit_bytes} bytes\n\nOutput HTML only. Complete the document before adding optional polish."""
     return system, user
 
 
@@ -41,18 +43,17 @@ def _safe_name(value: str) -> str:
     return value[:60] or "provider"
 
 
-def _extract_html_response(text: str) -> tuple[str, str]:
-    """Accept HTML-native output plus legacy JSON/fenced responses.
+def _completion_metadata(text: str) -> dict[str, Any] | None:
+    metadata = getattr(text, "completion_metadata", None)
+    return dict(metadata) if isinstance(metadata, dict) else None
 
-    Large HTML inside JSON is fragile because every quote/newline must be escaped. The
-    current builder protocol therefore asks for raw HTML, while this parser preserves
-    compatibility and salvages common provider formatting drift.
-    """
+
+def _extract_html_response(text: str) -> tuple[str, str]:
+    """Accept HTML-native output plus legacy JSON/fenced responses."""
     raw = text.strip().lstrip("\ufeff")
     if not raw:
         raise ValueError("provider returned an empty response")
 
-    # Backward compatibility with the v0.1 JSON builder protocol.
     if raw.startswith("{"):
         try:
             payload = _extract_json(raw)
@@ -60,8 +61,6 @@ def _extract_html_response(text: str) -> tuple[str, str]:
             if isinstance(html, str) and "<html" in html.lower():
                 return html.strip(), "legacy-json"
         except Exception:
-            # Fall through and try to salvage an HTML document embedded in otherwise
-            # malformed wrapper text.
             pass
 
     fenced = re.match(r"^```(?:html)?\s*(.*?)\s*```$", raw, flags=re.IGNORECASE | re.DOTALL)
@@ -82,6 +81,8 @@ def _extract_html_response(text: str) -> tuple[str, str]:
     html = raw[start : end + len("</html>")].strip()
     if "<html" not in html.lower():
         raise ValueError("provider did not return a complete HTML document")
+    if "<script" in html.lower() and "</script>" not in html.lower():
+        raise ValueError("provider returned an unclosed <script> block")
     return html, format_name
 
 
@@ -116,8 +117,10 @@ class PrototypeForge:
                 provider_spec, client = future_map[future]
                 provider = getattr(provider_spec, "name", getattr(client, "name", "provider"))
                 raw_path: Path | None = None
+                metadata: dict[str, Any] | None = None
                 try:
                     response = future.result()
+                    metadata = _completion_metadata(response)
                     raw_path = _write_raw_response(output_dir, provider, response)
                     html, response_format = _extract_html_response(response)
                     build_id = hashlib.sha1(
@@ -127,7 +130,6 @@ class PrototypeForge:
                     build_dir.mkdir(parents=True, exist_ok=True)
                     (build_dir / "index.html").write_text(html)
 
-                    # Evidence belongs next to the contender, not inside the 13KB game ZIP.
                     meta_dir = output_dir / "meta"
                     meta_dir.mkdir(parents=True, exist_ok=True)
                     meta_path = meta_dir / f"{_safe_name(provider)}-{build_id}.json"
@@ -137,6 +139,7 @@ class PrototypeForge:
                         "game_spec": str(spec_path),
                         "raw_response": str(raw_path),
                         "response_format": response_format,
+                        "completion_metadata": metadata,
                     }, indent=2) + "\n")
 
                     zip_path = output_dir / "dist" / f"{_safe_name(provider)}-{build_id}.zip"
@@ -156,6 +159,7 @@ class PrototypeForge:
                         raw_response_path=str(raw_path),
                         response_format=response_format,
                         game_spec_path=str(spec_path),
+                        completion_metadata=metadata,
                     ))
                 except Exception as exc:
                     results.append(PrototypeResult(
@@ -170,6 +174,7 @@ class PrototypeForge:
                         raw_response_path=str(raw_path) if raw_path else None,
                         response_format=None,
                         game_spec_path=str(spec_path),
+                        completion_metadata=metadata,
                         error=f"{type(exc).__name__}: {exc}",
                     ))
 
