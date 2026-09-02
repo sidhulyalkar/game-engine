@@ -1,4 +1,6 @@
-from game_engine.evidence_broker import combine_behavioral_evidence
+import json
+
+from game_engine.evidence_broker import combine_behavioral_evidence, write_critic_reality_view
 
 
 def action(pass_ids=(), fail_ids=()):
@@ -105,3 +107,39 @@ def test_builds_are_classified_independently_without_cross_contamination():
     assert decision(result, "a")["status"] == "behaviorally_qualified"
     assert decision(result, "b")["status"] == "behavioral_repair"
     assert result["llm_critic_eligible_build_ids"] == ["a"]
+
+
+def test_critic_reality_view_keeps_only_behaviorally_qualified_builds(tmp_path):
+    reality = tmp_path / "reality"
+    reality.mkdir()
+    (reality / "qualification.json").write_text(json.dumps({
+        "browsers": ["chromium", "firefox", "webkit"],
+        "full_pass_build_ids": ["a", "b"],
+        "matrix": {"a": {"chromium": True}, "b": {"chromium": True}},
+        "initial_text_matrix": {"a": {"chromium": "A"}, "b": {"chromium": "B"}},
+    }))
+    (reality / "reality.json").write_text(json.dumps([
+        {"build_id": "a", "browser": "chromium", "ok": True},
+        {"build_id": "b", "browser": "chromium", "ok": True},
+    ]))
+
+    view = write_critic_reality_view(reality, tmp_path / "critic-view", ["a"])
+    q = json.loads((view / "qualification.json").read_text())
+    assert q["full_pass_build_ids"] == ["a"]
+    assert list(q["matrix"]) == ["a"]
+    assert list(q["initial_text_matrix"]) == ["a"]
+    assert q["behavioral_gate_applied"] is True
+    traces = json.loads((view / "reality.json").read_text())
+    assert {row["build_id"] for row in traces} == {"a", "b"}
+
+
+def test_critic_reality_view_rejects_ids_that_never_passed_browser_reality(tmp_path):
+    reality = tmp_path / "reality"
+    reality.mkdir()
+    (reality / "qualification.json").write_text(json.dumps({"full_pass_build_ids": ["a"]}))
+    try:
+        write_critic_reality_view(reality, tmp_path / "critic-view", ["missing"])
+    except ValueError as exc:
+        assert "non-Browser-Reality" in str(exc)
+    else:
+        raise AssertionError("expected eligibility mismatch to fail closed")
