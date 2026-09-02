@@ -57,10 +57,49 @@ def _vector_steps(action: dict[str, Any], hold_ms: int) -> list[InputProgramStep
     return result
 
 
-def _pointer_click_steps(action_id: str) -> list[InputProgramStep]:
+def _pointer_button(binding: str) -> str:
+    if binding == "PrimaryPointer":
+        return "left"
+    if binding == "SecondaryPointer":
+        return "right"
+    if binding == "MiddlePointer":
+        return "middle"
+    raise ActionPlanError(f"unsupported pointer button binding: {binding!r}")
+
+
+def _pointer_click_steps(action_id: str, binding: str) -> list[InputProgramStep]:
+    _pointer_button(binding)
     return [
-        InputProgramStep(action_id, "pointer_click", "pointer_click", pointer_target=(0.5, 0.5), sample_after=True),
+        InputProgramStep(
+            action_id,
+            "pointer_click",
+            "pointer_click",
+            binding=binding,
+            pointer_target=(0.5, 0.5),
+            sample_after=True,
+        ),
     ]
+
+
+def _pointer_move_steps(action_id: str, hold_ms: int) -> list[InputProgramStep]:
+    result: list[InputProgramStep] = []
+    for label, target in (
+        ("right", (0.75, 0.5)),
+        ("left", (0.25, 0.5)),
+        ("up", (0.5, 0.25)),
+        ("down", (0.5, 0.75)),
+    ):
+        result.append(InputProgramStep(
+            action_id,
+            "pointer_move",
+            "pointer_move",
+            binding="PointerMotion",
+            direction=label,
+            duration_ms=hold_ms,
+            sample_after=True,
+            pointer_target=target,
+        ))
+    return result
 
 
 def _pointer_drag_steps(action_id: str, hold_ms: int) -> list[InputProgramStep]:
@@ -72,9 +111,9 @@ def _pointer_drag_steps(action_id: str, hold_ms: int) -> list[InputProgramStep]:
         ("down", (0.5, 0.75)),
     ):
         result.extend([
-            InputProgramStep(action_id, "pointer_drag", "pointer_down", direction=label, pointer_target=(0.5, 0.5)),
-            InputProgramStep(action_id, "pointer_drag", "pointer_move", direction=label, pointer_target=target, duration_ms=hold_ms),
-            InputProgramStep(action_id, "pointer_drag", "pointer_up", direction=label, pointer_target=target, sample_after=True),
+            InputProgramStep(action_id, "pointer_drag", "pointer_down", binding="PrimaryPointer", direction=label, pointer_target=(0.5, 0.5)),
+            InputProgramStep(action_id, "pointer_drag", "pointer_move", binding="PrimaryPointer", direction=label, pointer_target=target, duration_ms=hold_ms),
+            InputProgramStep(action_id, "pointer_drag", "pointer_up", binding="PrimaryPointer", direction=label, pointer_target=target, sample_after=True),
         ])
     return result
 
@@ -115,7 +154,13 @@ def compile_input_program(
             for key in bindings:
                 program.extend(_key_steps(action_id, str(key), hold_ms))
         elif kind == "pointer_click":
-            program.extend(_pointer_click_steps(action_id))
+            bindings = action.get("bindings")
+            if not isinstance(bindings, list) or not bindings:
+                raise ActionPlanError(f"{action_id}: pointer_click action requires bindings")
+            for binding in bindings:
+                program.extend(_pointer_click_steps(action_id, str(binding)))
+        elif kind == "pointer_move":
+            program.extend(_pointer_move_steps(action_id, hold_ms))
         elif kind == "pointer_drag":
             program.extend(_pointer_drag_steps(action_id, hold_ms))
         elif _required(action):
@@ -165,13 +210,7 @@ def execute_input_program(
     sample: Callable[[], None] | None = None,
     settle_ms: int = 80,
 ) -> None:
-    """Execute an abstract input program against a Playwright-like page.
-
-    The function intentionally depends only on the page's keyboard/mouse/wait surface,
-    making its choreography unit-testable without launching a browser. `sample()` is
-    invoked only at explicit action boundaries so later scoring can attribute state
-    changes to the advertised binding that preceded them.
-    """
+    """Execute an abstract input program against a Playwright-like page."""
     if viewport_width <= 0 or viewport_height <= 0:
         raise ActionPlanError("viewport dimensions must be positive")
     if settle_ms < 0 or settle_ms > 5000:
@@ -189,12 +228,14 @@ def execute_input_program(
         elif step.command == "wait":
             page.wait_for_timeout(step.duration_ms)
         elif step.command == "pointer_click":
+            if not step.binding:
+                raise ActionPlanError(f"{step.action_id}: pointer_click missing binding")
             x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
-            page.mouse.click(x, y)
+            page.mouse.click(x, y, button=_pointer_button(step.binding))
         elif step.command == "pointer_down":
             x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
             page.mouse.move(x, y)
-            page.mouse.down()
+            page.mouse.down(button=_pointer_button(step.binding or "PrimaryPointer"))
         elif step.command == "pointer_move":
             x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
             page.mouse.move(x, y, steps=6)
@@ -203,7 +244,7 @@ def execute_input_program(
         elif step.command == "pointer_up":
             x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
             page.mouse.move(x, y)
-            page.mouse.up()
+            page.mouse.up(button=_pointer_button(step.binding or "PrimaryPointer"))
         else:
             raise ActionPlanError(f"unsupported input program command: {step.command!r}")
 
