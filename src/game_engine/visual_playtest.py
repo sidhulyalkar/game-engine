@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from .playtest import (
-    GameplayEvidenceLab,
     PolicyTrace,
     TelemetrySample,
     _TELEMETRY_JS,
@@ -19,6 +18,7 @@ from .playtest import (
     validate_snapshot,
 )
 from .reality import discover_builds, serve_directory
+from .structured_playtest import StructuredGameplayEvidenceLab
 
 
 # Independent player-facing evidence. The telemetry API is authored by the generated
@@ -126,8 +126,8 @@ def augment_visual_evidence(summary: dict[str, Any], traces: list[PolicyTrace], 
     return summary
 
 
-class CanvasAwareGameplayEvidenceLab(GameplayEvidenceLab):
-    """GameplayEvidenceLab with an independent DOM + canvas-pixel observation channel."""
+class CanvasAwareGameplayEvidenceLab(StructuredGameplayEvidenceLab):
+    """Structured gameplay evidence with an independent DOM + canvas observation channel."""
 
     def _sample(self, page, started: float) -> tuple[TelemetrySample, bool, str | None, list[str]]:
         telemetry = page.evaluate(_TELEMETRY_JS)
@@ -170,6 +170,7 @@ class CanvasAwareGameplayEvidenceLab(GameplayEvidenceLab):
             raise ValueError("no eligible byte/browser-qualified builds found for gameplay evidence")
 
         game_spec = _load_game_spec(builds_root)
+        self.configure_action_program(game_spec)
         output_dir.mkdir(parents=True, exist_ok=True)
         traces: list[PolicyTrace] = []
         with sync_playwright() as playwright:
@@ -181,6 +182,7 @@ class CanvasAwareGameplayEvidenceLab(GameplayEvidenceLab):
                         self._write_traces(output_dir, traces)
 
         summary = summarize_playtests(traces, self.browsers, game_spec)
+        summary = self._decorate_summary(summary)
         summary = augment_visual_evidence(summary, traces, self.browsers)
         (output_dir / "playtest-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         return summary
