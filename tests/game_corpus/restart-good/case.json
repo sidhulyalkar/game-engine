@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "restart_binding": "R",
+    "ok": true,
+    "pre_restart_mutated": true,
+    "independent_visual_mutation": true,
+    "restart_visual_response": true,
+    "visual_returned_to_baseline": true,
+    "restart_event_seen": true,
+    "violations": []
+  }
+}
