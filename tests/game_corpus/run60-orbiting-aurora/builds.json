@@ -1,0 +1,13 @@
+[
+  {
+    "provider": "nvidia-nemotron-builder",
+    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "build_id": "421bf7afca",
+    "ok": true,
+    "source_dir": "game",
+    "zip_path": "dist/nvidia-nemotron-builder-421bf7afca.zip",
+    "compressed_bytes": 3036,
+    "byte_headroom": 10276,
+    "warnings": []
+  }
+]

@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbiting Aurora</title>
+<style>
+  body{margin:0;background:#000;color:#fff;font-family:sans-serif;display:flex;height:100vh;align-items:center;justify-content:center}
+  canvas{display:block}
+  #ui{position:absolute;top:10px;left:10px;font-size:14px;line-height:1.4;text-shadow:0 0 3px #000}
+  #controls{position:absolute;bottom:10px;left:10px;font-size:12px;color:#aaa;text-shadow:0 0 2px #000}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">Score: <span id="score">0</span><br>Tension: <span id="tension">0</span>/10</div>
+<div id="controls">←→: Nudge | ↑: Boost | ↓: Brake</div>
+<script>
+const sim = {
+  dt: 1/60,
+  maxDt: 0.05,
+  t: 0,
+  acc: 0,
+  playing: true,
+  score: 0,
+  tension: 0,
+  tensionTime: 0,
+  hazardSpawnTime: 0,
+  safeBand: 0.4,
+  star: {x:0, y:0, r:20},
+  unicorn: {x:100, y:0, vx:0, vy:0, ax:0, ay:0, mass:1, radius:8},
+  hazards: [],
+  particles: [],
+  audioCtx: null,
+  oscillator: null,
+  gain: null,
+  lastAction: 0
+};
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const tensionEl = document.getElementById('tension');
+let width, height;
+
+function init() {
+  resize();
+  reset();
+  loop();
+}
+
+function resize() {
+  width = canvas.width = window.innerWidth;
+  height = canvas.height = window.innerHeight;
+  sim.star.x = width / 2;
+  sim.star.y = height / 2;
+}
+
+function reset() {
+  sim.t = 0;
+  sim.acc = 0;
+  sim.playing = true;
+  sim.score = 0;
+  sim.tension = 0;
+  sim.tensionTime = 0;
+  sim.hazardSpawnTime = 0;
+  sim.safeBand = 0.4;
+  sim.unicorn.x = sim.star.x + 150;
+  sim.unicorn.y = sim.star.y;
+  sim.unicorn.vx = 0;
+  sim.unicorn.vy = -2;
+  sim.unicorn.ax = 0;
+  sim.unicorn.ay = 0;
+  sim.hazards = [];
+  sim.particles = [];
+  initAudio();
+}
+
+function initAudio() {
+  if (sim.audioCtx) sim.audioCtx.close();
+  sim.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  sim.gain = sim.audioCtx.createGain();
+  sim.gain.gain.value = 0.1;
+  sim.gain.connect(sim.audioCtx.destination);
+}
+
+function playBounce(freq) {
+  if (!sim.audioCtx) return;
+  const osc = sim.audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(freq, sim.audioCtx.currentTime);
+  osc.connect(sim.gain);
+  osc.start();
+  osc.stop(sim.audioCtx.currentTime + 0.2);
+}
+
+function spawnHazard() {
+  if (sim.hazards.length >= 32) return;
+  const angle = Math.random() * Math.PI * 2;
+  const r = sim.star.r + 50 + Math.random() * 100;
+  sim.hazards.push({
+    x: sim.star.x + Math.cos(angle) * r,
+    y: sim.star.y + Math.sin(angle) * r,
+    vx: -Math.sin(angle) * 0.5,
+    vy: Math.cos(angle) * 0.5,
+    radius: 12,
+    life: 200
+  });
+}
+
+function updateParticles() {
+  for (let i = sim.particles.length - 1; i >= 0; i--) {
+    const p = sim.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+    if (p.life <= 0) sim.particles.splice(i, 1);
+  }
+  if (sim.particles.length > 256) sim.particles.splice(256);
+}
+
+function spawnParticle(x, y, vx, vy, life) {
+  if (sim.particles.length >= 256) return;
+  sim.particles.push({x, y, vx, vy, life});
+}
+
+function update(delta) {
+  if (!sim.playing) return;
+
+  const keys = sim.keys || {};
+  if (keys.ArrowLeft) { sim.unicorn.ax -= 0.2; sim.lastAction = sim.t; }
+  if (keys.ArrowRight) { sim.unicorn.ax += 0.2; sim.lastAction = sim.t; }
+  if (keys.ArrowUp) { sim.unicorn.ay -= 0.3; sim.lastAction = sim.t; }
+  if (keys.ArrowDown) { sim.unicorn.ay += 0.1; sim.lastAction = sim.t; }
+
+  const dx = sim.unicorn.x - sim.star.x;
+  const dy = sim.unicorn.y - sim.star.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const nx = dx / dist;
+  const ny = dy / dist;
+
+  const k = 0.01;
+  const fx = -k * (dist - sim.star.r) * nx;
+  const fy = -k * (dist - sim.star.r) * ny;
+  sim.unicorn.ax += fx / sim.unicorn.mass;
+  sim.unicorn.ay += fy / sim.unicorn.mass;
+
+  sim.unicorn.vx *= Math.pow(0.99, delta * 60);
+  sim.unicorn.vy *= Math.pow(0.99, delta * 60);
+  sim.unicorn.vx += sim.unicorn.ax * delta;
+  sim.unicorn.vy += sim.unicorn.ay * delta;
+  sim.unicorn.x += sim.unicorn.vx * delta;
+  sim.unicorn.y += sim.unicorn.vy * delta;
+
+  sim.unicorn.ax = 0;
+  sim.unicorn.ay = 0;
+
+  if (dist < sim.star.r + sim.unicorn.radius) {
+    const overlap = (sim.star.r + sim.unicorn.radius) - dist;
+    sim.unicorn.x += nx * overlap * 0.5;
+    sim.unicorn.y += ny * overlap * 0.5;
+    const velNorm = nx * sim.unicorn.vx + ny * sim.unicorn.vy;
+    sim.unicorn.vx -= 2 * velNorm * nx;
+    sim.unicorn.vy -= 2 * velNorm * ny;
+    const speed = Math.sqrt(sim.unicorn.vx**2 + sim.unicorn.vy**2);
+    playBounce(200 + speed * 10);
+    spawnParticle(sim.unicorn.x, sim.unicorn.y, -sim.unicorn.vx*0.1, -sim.unicorn.vy*0.1, 20);
+    sim.tensionTime = 0;
+  }
+
+  for (let h of sim.hazards) {
+    const hx = sim.unicorn.x - h.x;
+    const hy = sim.unicorn.y - h.y;
+    const hdist = Math.sqrt(hx*hx + hy*hy);
+    if (hdist < sim.unicorn.radius + h.radius) {
+      sim.playing = false;
+      return;
+    }
+  }
+
+  for (let h of sim.hazards) {
+    h.x += h.vx * delta;
+    h.y += h.vy * delta;
+    h.life--;
+    if (h.life <= 0) {
+      const idx = sim.hazards.indexOf(h);
+      if (idx > -1) sim.hazards.splice(idx, 1);
+    }
+  }
+
+  if (sim.lastAction > 0 && sim.t - sim.lastAction > 1) {
+    sim.tensionTime += delta;
+    if (sim.tensionTime >= 10) {
+      sim.tension = Math.min(10, sim.tension + 1);
+      sim.tensionTime = 0;
+      if (sim.tension >= 10) {
+        sim.tension = 0;
+        sim.safeBand = Math.max(0.1, sim.safeBand - 0.05);
+        spawnHazard();
+        for (let i = 0; i < 3; i++) {
+          setTimeout(() => playBounce(220 * Math.pow(1.5, i)), i * 100);
+        }
+      }
+    }
+  } else {
+    sim.tensionTime = 0;
+  }
+
+  sim.score = Math.floor(sim.t / 10);
+  sim.t += delta;
+
+  if (delta > sim.maxDt) delta = sim.maxDt;
+}
+
+function render() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, width, height);
+
+  const starGrad = ctx.createRadialGradient(sim.star.x, sim.star.y, 0, sim.star.x, sim.star.y, sim.star.r);
+  for (let i = 0; i <= 1; i += 0.1) {
+    const hue = (i * 360 + sim.t * 10) % 360;
+    starGrad.addColorStop(i, `hsl(${hue}, 80%, 50%)`);
+  }
+  ctx.fillStyle = starGrad;
+  ctx.beginPath();
+  ctx.arc(sim.star.x, sim.star.y, sim.star.r, 0, Math.PI*2);
+  ctx.fill();
+
+  const grad = ctx.createLinearGradient(sim.unicorn.x, sim.unicorn.y, sim.unicorn.x - sim.unicorn.vx*2, sim.unicorn.y - sim.unicorn.vy*2);
+  grad.addColorStop(0, 'hsl(0, 100%, 80%)');
+  grad.addColorStop(1, 'hsla(0, 100%, 80%, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(sim.unicorn.x, sim.unicorn.y, sim.unicorn.radius, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#ff00ff';
+  for (const h of sim.hazards) {
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, h.radius, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  for (const p of sim.particles) {
+    ctx.fillStyle = `hsla(${ (sim.t*10 + p.life) % 360 }, 80%, 60%, ${p.life/200})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = 'hsla(0, 0%, 100%, 0.2)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(sim.star.x, sim.star.y, (sim.star.r + 50) / sim.safeBand, 0, Math.PI*2);
+  ctx.stroke();
+}
+
+function loop(timestamp) {
+  if (!sim.lastTimestamp) sim.lastTimestamp = timestamp;
+  const delta = (timestamp - sim.lastTimestamp) / 1000;
+  sim.lastTimestamp = timestamp;
+  sim.acc += delta;
+  while (sim.acc >= sim.dt) {
+    update(sim.dt);
+    sim.acc -= sim.dt;
+  }
+  render();
+  if (sim.playing) requestAnimationFrame(loop);
+  else {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0,0,width,height);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = '20px sans-serif';
+    ctx.fillText('Game Over', width/2, height/2);
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Click to Restart', width/2, height/2+30);
+  }
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('keydown', e => { sim.keys = sim.keys || {}; sim.keys[e.key] = true; });
+window.addEventListener('keyup', e => { sim.keys = sim.keys || {}; sim.keys[e.key] = false; });
+canvas.addEventListener('click', () => { if (!sim.playing) reset(); });
+init();
+</script>
+</body>
+</html>

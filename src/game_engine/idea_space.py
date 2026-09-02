@@ -59,7 +59,7 @@ def procedural_concepts(brief: Brief, count: int = 24, seed: int = 13) -> list[C
         title = f"{rng.choice(nouns)} {rng.choice(['Riot','Rail','Relay','Rift','Circuit','Stampede','Splice','Crash'])}"
         mechanic = f"Players {verb} through {physics}; {twist}."
         cid = _stable_id(seed, i, title)
-        categories = list(dict.fromkeys(brief.target_categories + (["online"] if i % 7 == 0 else [])))
+        categories = list(brief.active_categories)
         concepts.append(
             Concept(
                 concept_id=cid,
@@ -75,7 +75,7 @@ def procedural_concepts(brief: Brief, count: int = 24, seed: int = 13) -> list[C
                 category_fit=categories,
                 byte_hypothesis="Canvas/WebAudio primitives, seeded content, data-driven enemies, no shipped media assets.",
                 risks=["mechanic readability", "difficulty curve", "compressed tutorial budget"],
-                tags=[verb, physics, structure, brief.theme.lower()],
+                tags=[verb, physics, structure, brief.theme.lower(), f"primary:{brief.primary_category or 'desktop'}"],
             )
         )
     return concepts
