@@ -1,0 +1,88 @@
+name: Builder Contract CI
+
+on:
+  push:
+    branches:
+      - agent/v0.2-builder-api-contract
+    paths:
+      - '.github/workflows/builder-contract-ci.yml'
+      - 'src/game_engine/providers/**'
+      - 'src/game_engine/config.py'
+      - 'src/game_engine/prototype.py'
+      - 'studio.nvidia.build.json'
+      - 'examples/qualification/prism-duet-run33578786301.json'
+      - 'tests/test_provider_contract.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: builder-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify-builders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      OUT: runs/builder-contract
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install studio
+        run: python -m pip install -e . pytest
+
+      - name: Unit contracts
+        run: pytest -q tests/test_provider_contract.py tests/test_prototype.py
+
+      - name: Validate NVIDIA secret
+        run: |
+          if [ -z "${NVIDIA_API_KEY:-}" ]; then
+            echo "::error::Repository Actions secret NVIDIA_API_KEY is not available."
+            exit 2
+          fi
+
+      - name: Build frozen Prism Duet with current provider profiles
+        continue-on-error: true
+        run: |
+          game-engine swarm-build examples/qualification/prism-duet-run33578786301.json \
+            --providers studio.nvidia.build.json \
+            --out "$OUT" --workers 2
+
+      - name: Qualify builder boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('runs/builder-contract/builds.json')
+          if not path.exists():
+              raise SystemExit('builder contract produced no builds.json')
+          rows = json.loads(path.read_text())
+          by_provider = {row['provider']: row for row in rows}
+          kimi = by_provider.get('nvidia-kimi-builder')
+          if not kimi:
+              raise SystemExit(f'Kimi builder row missing: {rows}')
+          if 'Provider HTTP 400' in str(kimi.get('error') or ''):
+              raise SystemExit(f'Kimi builder request contract still rejected: {kimi}')
+          good = [row for row in rows if row.get('ok')]
+          if not good:
+              raise SystemExit(f'no byte-qualified builder output survived: {rows}')
+          for row in rows:
+              print(json.dumps(row, indent=2))
+          print('qualified builders:', [(row['provider'], row['compressed_bytes']) for row in good])
+          PY
+
+      - name: Preserve builder evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: builder-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: runs/builder-contract
+          if-no-files-found: warn
+          retention-days: 30
