@@ -1,0 +1,12 @@
+{
+  "description": "Control-aware fixture requiring pointer motion plus distinct primary and secondary clicks.",
+  "expected": {
+    "active_policy_source": "gamespec-actions",
+    "instrumented": true,
+    "mechanically_observable": true,
+    "independently_observable": true,
+    "progress_delta": 0.5,
+    "score_delta": 10.0,
+    "secondary_binding": "SecondaryPointer"
+  }
+}
