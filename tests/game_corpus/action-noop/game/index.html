@@ -1,0 +1,9 @@
+<!doctype html><html><body style="margin:0;background:#111"><canvas id="c" width="320" height="180"></canvas><script>
+const x=c.getContext('2d');let px=160,py=90,score=0,progress=0,actions=0,core=0,start=performance.now(),events=[{type:'run_start',at_ms:0}];
+function now(){return performance.now()-start}function event(type){events.push({type,at_ms:now()});if(events.length>256)events.shift()}
+function draw(){x.fillStyle='#111';x.fillRect(0,0,320,180);x.fillStyle=progress?'#f5c':'#5cf';x.beginPath();x.arc(px,py,14,0,7);x.fill();x.fillStyle='#fff';x.fillText('score '+score,8,16)}draw();
+c.addEventListener('mousemove',e=>{let r=c.getBoundingClientRect();px=(e.clientX-r.left)*320/r.width;py=(e.clientY-r.top)*180/r.height;actions++;core++;event('action_accepted');event('core_mechanic_activation');draw()});
+c.addEventListener('mousedown',e=>{actions++;event('action_accepted');if(e.button===0){score+=10;core++;event('core_mechanic_activation');draw()}if(e.button===2){/* deliberately accepted but no gameplay effect */}});
+c.addEventListener('contextmenu',e=>e.preventDefault());
+window.__GAME_ENGINE_TELEMETRY__={schema_version:'0.1',snapshot:()=>({elapsed_ms:now(),tick:0,state:'playing',alive:true,game_over:false,score,progress,restart_count:0,entity_count:1,action_count:actions,last_action_ms:actions?now():null,core_mechanic_activations:core,progression_transitions:0,state_hash:[Math.round(px),Math.round(py),score,progress,core].join(':')}),events:()=>events};
+</script></body></html>
