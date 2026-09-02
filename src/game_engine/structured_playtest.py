@@ -16,6 +16,25 @@ from .playtest import GameplayEvidenceLab, InputAction, PolicyTrace, _load_game_
 from .reality import discover_builds, serve_directory
 
 
+_POINTER_SURFACE_JS = r"""() => {
+  const vw = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+  const vh = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+  const candidates = [...document.querySelectorAll('canvas')].map((canvas, index) => {
+    const r = canvas.getBoundingClientRect();
+    const left = Math.max(0, r.left);
+    const top = Math.max(0, r.top);
+    const right = Math.min(vw, r.right);
+    const bottom = Math.min(vh, r.bottom);
+    const width = Math.max(0, right - left);
+    const height = Math.max(0, bottom - top);
+    return {index, x:left, y:top, width, height, area:width * height};
+  }).filter(row => row.area > 16);
+  candidates.sort((a, b) => b.area - a.area);
+  if (candidates.length) return {...candidates[0], source:'canvas'};
+  return {index:null, x:0, y:0, width:vw, height:vh, area:vw * vh, source:'viewport'};
+}"""
+
+
 class StructuredGameplayEvidenceLab(GameplayEvidenceLab):
     """Gameplay Evidence Lab driven by the authoritative structured GameSpec actions.
 
@@ -139,11 +158,24 @@ class StructuredGameplayEvidenceLab(GameplayEvidenceLab):
                 actions.append(InputAction(round((time.perf_counter() - started) * 1000, 2), action))
 
             sample()
+            surface = page.evaluate(_POINTER_SURFACE_JS)
+            if not isinstance(surface, dict):
+                raise ActionPlanError("pointer surface probe returned no object")
+            surface_width = max(1, int(round(float(surface.get("width") or self.viewport_width))))
+            surface_height = max(1, int(round(float(surface.get("height") or self.viewport_height))))
+            origin_x = max(0, int(round(float(surface.get("x") or 0))))
+            origin_y = max(0, int(round(float(surface.get("y") or 0))))
+            if surface.get("source") != "canvas" and any(
+                step.kind.startswith("pointer_") for step in self.active_program
+            ):
+                warnings.append("no visible canvas detected; structured pointer actions used viewport fallback")
             execute_input_program(
                 page,
                 self.active_program,
-                viewport_width=self.viewport_width,
-                viewport_height=self.viewport_height,
+                viewport_width=surface_width,
+                viewport_height=surface_height,
+                pointer_origin_x=origin_x,
+                pointer_origin_y=origin_y,
                 mark=mark,
                 sample=sample,
                 settle_ms=max(60, min(160, self.sample_interval_ms)),
