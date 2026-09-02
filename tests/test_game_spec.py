@@ -1,4 +1,4 @@
-from game_engine.game_spec import compile_game_spec
+from game_engine.game_spec import compile_actions, compile_game_spec
 from game_engine.schema import Brief, Concept
 from game_engine.swarm import _roles_for_brief
 
@@ -53,6 +53,7 @@ def test_game_spec_strips_expansion_work_from_first_prototype():
         expansion_categories=["mobile", "online", "webxr"],
     )
     spec = compile_game_spec(brief, _concept())
+    assert spec.spec_version == "0.2"
     assert spec.primary_category == "desktop"
     assert spec.timing_contract["frame_rate_independent_damping"] is True
     assert spec.state_bounds["hazards_or_enemies"] > 0
@@ -60,3 +61,23 @@ def test_game_spec_strips_expansion_work_from_first_prototype():
     assert any("online adaptation" in item for item in spec.non_goals)
     assert any("one arena" in item.lower() for item in spec.prototype_scope)
     assert "core_mechanic_activation" in spec.telemetry_contract["events"]
+    assert "GameSpec.actions is authoritative" in spec.controls
+    assert [action["id"] for action in spec.actions] == ["move", "primary"]
+    assert spec.actions[0]["kind"] == "keyboard_vector"
+    assert spec.actions[0]["bindings"]["up"] == ["w", "ArrowUp"]
+    assert spec.actions[1]["bindings"] == ["Space"]
+    assert spec.actions[1]["source"] == "integrator-default"
+
+
+def test_exact_named_desktop_controls_are_preserved():
+    actions = compile_actions("desktop", "WASD to move, Space to dash, mouse drag to aim")
+    assert len(actions) == 3
+    assert actions[0]["id"] == "move"
+    assert actions[0]["source"] == "exact"
+    assert actions[1]["kind"] == "pointer_drag"
+    assert actions[2]["bindings"] == ["Space"]
+    assert actions[2]["source"] == "exact"
+
+
+def test_non_desktop_actions_wait_for_adaptation_specific_normalizer():
+    assert compile_actions("webxr", "trigger to grab") == []
