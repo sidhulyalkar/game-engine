@@ -27,6 +27,70 @@ class SwarmContribution:
     warnings: list[str] = field(default_factory=list)
     raw_response_path: str | None = None
     response_sha256: str | None = None
+    failure_class: str | None = None
+    skipped: bool = False
+
+
+class ProviderCircuitOpen(RuntimeError):
+    pass
+
+
+def classify_operational_failure(exc: Exception) -> str | None:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "http 429" in text or "rate limit" in text:
+        return "rate_limit"
+    if "http 404" in text or "model not found" in text:
+        return "endpoint_or_model_not_found"
+    if "http 5" in text:
+        return "server_5xx"
+    if "transport failure" in text or "timeout" in text or "urlerror" in text or "connection" in text:
+        return "transport"
+    return None
+
+
+class ProviderCircuit:
+    """Small operational circuit breaker shared by one provider's queued calls.
+
+    Content/schema failures happen after the HTTP call returns and therefore never
+    enter this circuit. A successful provider response resets the consecutive
+    operational failure streak. Final rate-limit or missing-endpoint failures open
+    immediately; transport/5xx failures require two consecutive failures.
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        self._lock = threading.Lock()
+        self._consecutive = 0
+        self._open = False
+        self._reason: str | None = None
+
+    def assert_closed(self) -> None:
+        with self._lock:
+            if self._open:
+                raise ProviderCircuitOpen(
+                    f"provider circuit open for {self.provider}: {self._reason or 'operational failures'}"
+                )
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._consecutive = 0
+
+    def record_failure(self, exc: Exception) -> str | None:
+        failure_class = classify_operational_failure(exc)
+        if failure_class is None:
+            return None
+        with self._lock:
+            self._consecutive += 1
+            immediate = failure_class in {"rate_limit", "endpoint_or_model_not_found"}
+            if immediate or self._consecutive >= 2:
+                self._open = True
+                self._reason = failure_class
+        return failure_class
+
+    @property
+    def is_open(self) -> bool:
+        with self._lock:
+            return self._open
 
 
 def _extract_json(text: str) -> dict:
@@ -97,9 +161,26 @@ def _roles_for_brief(brief: Brief) -> list[AgentRole]:
     return roles
 
 
-def _complete_limited(semaphore: threading.Semaphore, client: LLMClient, system: str, prompt: str) -> str:
+def _complete_limited(
+    semaphore: threading.Semaphore,
+    circuit: ProviderCircuit,
+    client: LLMClient,
+    system: str,
+    prompt: str,
+) -> str:
+    # Skip without occupying provider capacity when a previous call already opened
+    # the circuit. Check again after acquiring because the circuit may open while
+    # this task is waiting on another in-flight request.
+    circuit.assert_closed()
     with semaphore:
-        return client.complete(system, prompt)
+        circuit.assert_closed()
+        try:
+            response = client.complete(system, prompt)
+        except Exception as exc:
+            circuit.record_failure(exc)
+            raise
+        circuit.record_success()
+        return response
 
 
 def _safe_fragment(value: str) -> str:
@@ -145,10 +226,12 @@ class SwarmStudio:
                 jobs.append((spec, client, role, sample))
 
         provider_limits: dict[str, threading.Semaphore] = {}
+        provider_circuits: dict[str, ProviderCircuit] = {}
         for spec, client in self.clients:
             provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
             limit = max(1, int(getattr(spec, "max_concurrency", 1)))
             provider_limits[provider_name] = threading.Semaphore(limit)
+            provider_circuits[provider_name] = ProviderCircuit(provider_name)
 
         generated: list[Concept] = []
         contributions: list[SwarmContribution] = []
@@ -159,6 +242,7 @@ class SwarmStudio:
                 future = pool.submit(
                     _complete_limited,
                     provider_limits[provider_name],
+                    provider_circuits[provider_name],
                     client,
                     SYSTEM,
                     inventor_prompt(role, brief, sample, concepts_per_call),
@@ -202,6 +286,8 @@ class SwarmStudio:
                         response_sha256=response_sha256,
                     ))
                 except Exception as exc:
+                    skipped = isinstance(exc, ProviderCircuitOpen)
+                    failure_class = "circuit_open" if skipped else classify_operational_failure(exc)
                     contributions.append(SwarmContribution(
                         provider=provider_name,
                         role=role.name,
@@ -210,6 +296,8 @@ class SwarmStudio:
                         error=f"{type(exc).__name__}: {exc}",
                         raw_response_path=raw_response_path,
                         response_sha256=response_sha256,
+                        failure_class=failure_class,
+                        skipped=skipped,
                     ))
 
         population = deduplicate(seeds + generated, threshold=0.84)
@@ -240,7 +328,8 @@ class SwarmStudio:
             "providers": sorted({c.provider for c in contributions}),
             "successful_providers": successful_providers,
             "successful_assignments": len(successful),
-            "failed_assignments": sum(not c.ok for c in contributions),
+            "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
+            "skipped_assignments": sum(c.skipped for c in contributions),
             "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
             "population_size": len(concepts),
             "winner_id": concepts[0].concept_id if concepts else None,
@@ -262,7 +351,8 @@ class SwarmStudio:
                     "active_categories": brief.active_categories,
                     "successful_providers": successful_providers,
                     "successful_assignments": len(successful),
-                    "failed_assignments": sum(not c.ok for c in contributions),
+                    "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
+                    "skipped_assignments": sum(c.skipped for c in contributions),
                     "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
                 },
             }, indent=2) + "\n")
