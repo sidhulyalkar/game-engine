@@ -6,6 +6,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .game_spec import compile_game_spec
 from .packaging import package_game
@@ -27,6 +28,10 @@ class PrototypeResult:
     raw_response_path: str | None = None
     response_format: str | None = None
     game_spec_path: str | None = None
+    finish_reason: str | None = None
+    recovery_attempted: bool = False
+    recovery_raw_response_path: str | None = None
+    recovery_finish_reason: str | None = None
     error: str | None = None
 
 
@@ -42,17 +47,11 @@ def _safe_name(value: str) -> str:
 
 
 def _extract_html_response(text: str) -> tuple[str, str]:
-    """Accept HTML-native output plus legacy JSON/fenced responses.
-
-    Large HTML inside JSON is fragile because every quote/newline must be escaped. The
-    current builder protocol therefore asks for raw HTML, while this parser preserves
-    compatibility and salvages common provider formatting drift.
-    """
+    """Accept HTML-native output plus legacy JSON/fenced responses."""
     raw = text.strip().lstrip("\ufeff")
     if not raw:
         raise ValueError("provider returned an empty response")
 
-    # Backward compatibility with the v0.1 JSON builder protocol.
     if raw.startswith("{"):
         try:
             payload = _extract_json(raw)
@@ -60,8 +59,6 @@ def _extract_html_response(text: str) -> tuple[str, str]:
             if isinstance(html, str) and "<html" in html.lower():
                 return html.strip(), "legacy-json"
         except Exception:
-            # Fall through and try to salvage an HTML document embedded in otherwise
-            # malformed wrapper text.
             pass
 
     fenced = re.match(r"^```(?:html)?\s*(.*?)\s*```$", raw, flags=re.IGNORECASE | re.DOTALL)
@@ -85,13 +82,45 @@ def _extract_html_response(text: str) -> tuple[str, str]:
     return html, format_name
 
 
-def _write_raw_response(output_dir: Path, provider: str, text: str) -> Path:
+def _looks_like_truncated_html(text: str) -> bool:
+    lower = text.lower()
+    has_start = "<!doctype html" in lower or "<html" in lower
+    return has_start and "</html>" not in lower
+
+
+def _bounded_draft(text: str, limit: int = 24_000) -> str:
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half] + "\n<!-- DRAFT MIDDLE OMITTED FOR RECOVERY CONTEXT -->\n" + text[-half:]
+
+
+def _recovery_prompt(brief: Brief, spec: GameSpec, draft: str) -> tuple[str, str]:
+    system = """You are recovering a truncated standalone HTML game artifact. Return ONLY one complete corrected HTML document from its opening doctype/html tag through </html>. Do not return a fragment, patch, markdown fence, explanation, or alternate design. Preserve the supplied GameSpec and the working ideas in the draft, but repair incomplete syntax and finish the smallest coherent playable implementation."""
+    user = f"""COMPETITION BRIEF:\n{json.dumps(brief.to_dict(), separators=(',', ':'))}\n\nIMPLEMENTATION GAMESPEC:\n{json.dumps(spec.to_dict(), separators=(',', ':'))}\n\nTRUNCATED DRAFT:\n{_bounded_draft(draft)}\n\nReturn the FULL corrected standalone HTML document only. It must end with </html>."""
+    return system, user
+
+
+def _write_raw_response(output_dir: Path, provider: str, text: str, label: str = "initial") -> Path:
     raw_dir = output_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(text.encode()).hexdigest()[:10]
-    path = raw_dir / f"{_safe_name(provider)}-{digest}.txt"
+    path = raw_dir / f"{_safe_name(provider)}-{label}-{digest}.txt"
     path.write_text(text)
     return path
+
+
+def _complete_with_provenance(client: LLMClient, system: str, prompt: str) -> tuple[str, str | None, dict[str, Any] | None]:
+    method = getattr(client, "complete_with_metadata", None)
+    if callable(method):
+        result = method(system, prompt)
+        content = getattr(result, "content", None)
+        if not isinstance(content, str):
+            raise RuntimeError("metadata completion returned no string content")
+        finish_reason = getattr(result, "finish_reason", None)
+        usage = getattr(result, "usage", None)
+        return content, str(finish_reason) if finish_reason is not None else None, usage if isinstance(usage, dict) else None
+    return client.complete(system, prompt), None, None
 
 
 class PrototypeForge:
@@ -109,17 +138,36 @@ class PrototypeForge:
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             future_map = {
-                pool.submit(client.complete, system, prompt): (provider_spec, client)
+                pool.submit(_complete_with_provenance, client, system, prompt): (provider_spec, client)
                 for provider_spec, client in self.clients
             }
             for future in as_completed(future_map):
                 provider_spec, client = future_map[future]
                 provider = getattr(provider_spec, "name", getattr(client, "name", "provider"))
                 raw_path: Path | None = None
+                recovery_path: Path | None = None
+                finish_reason: str | None = None
+                recovery_finish_reason: str | None = None
+                recovery_attempted = False
+                initial_usage: dict[str, Any] | None = None
+                recovery_usage: dict[str, Any] | None = None
                 try:
-                    response = future.result()
-                    raw_path = _write_raw_response(output_dir, provider, response)
-                    html, response_format = _extract_html_response(response)
+                    response, finish_reason, initial_usage = future.result()
+                    raw_path = _write_raw_response(output_dir, provider, response, "initial")
+                    try:
+                        html, response_format = _extract_html_response(response)
+                    except ValueError:
+                        if not _looks_like_truncated_html(response):
+                            raise
+                        recovery_attempted = True
+                        recovery_system, recovery_user = _recovery_prompt(brief, spec, response)
+                        recovered, recovery_finish_reason, recovery_usage = _complete_with_provenance(
+                            client, recovery_system, recovery_user
+                        )
+                        recovery_path = _write_raw_response(output_dir, provider, recovered, "recovery")
+                        html, recovery_format = _extract_html_response(recovered)
+                        response_format = f"recovered-{recovery_format}"
+
                     build_id = hashlib.sha1(
                         f"{provider}:{concept.concept_id}:{spec.spec_version}:{html}".encode()
                     ).hexdigest()[:10]
@@ -127,7 +175,6 @@ class PrototypeForge:
                     build_dir.mkdir(parents=True, exist_ok=True)
                     (build_dir / "index.html").write_text(html)
 
-                    # Evidence belongs next to the contender, not inside the 13KB game ZIP.
                     meta_dir = output_dir / "meta"
                     meta_dir.mkdir(parents=True, exist_ok=True)
                     meta_path = meta_dir / f"{_safe_name(provider)}-{build_id}.json"
@@ -137,6 +184,12 @@ class PrototypeForge:
                         "game_spec": str(spec_path),
                         "raw_response": str(raw_path),
                         "response_format": response_format,
+                        "finish_reason": finish_reason,
+                        "usage": initial_usage,
+                        "recovery_attempted": recovery_attempted,
+                        "recovery_raw_response": str(recovery_path) if recovery_path else None,
+                        "recovery_finish_reason": recovery_finish_reason,
+                        "recovery_usage": recovery_usage,
                     }, indent=2) + "\n")
 
                     zip_path = output_dir / "dist" / f"{_safe_name(provider)}-{build_id}.zip"
@@ -144,6 +197,8 @@ class PrototypeForge:
                     warnings = list(report.warnings)
                     if "<canvas" not in html.lower():
                         warnings.append("No canvas element detected; verify rendering strategy intentionally.")
+                    if recovery_attempted:
+                        warnings.append("Builder required one bounded full-document truncation recovery.")
                     results.append(PrototypeResult(
                         provider=provider,
                         build_id=build_id,
@@ -156,6 +211,10 @@ class PrototypeForge:
                         raw_response_path=str(raw_path),
                         response_format=response_format,
                         game_spec_path=str(spec_path),
+                        finish_reason=finish_reason,
+                        recovery_attempted=recovery_attempted,
+                        recovery_raw_response_path=str(recovery_path) if recovery_path else None,
+                        recovery_finish_reason=recovery_finish_reason,
                     ))
                 except Exception as exc:
                     results.append(PrototypeResult(
@@ -170,6 +229,10 @@ class PrototypeForge:
                         raw_response_path=str(raw_path) if raw_path else None,
                         response_format=None,
                         game_spec_path=str(spec_path),
+                        finish_reason=finish_reason,
+                        recovery_attempted=recovery_attempted,
+                        recovery_raw_response_path=str(recovery_path) if recovery_path else None,
+                        recovery_finish_reason=recovery_finish_reason,
                         error=f"{type(exc).__name__}: {exc}",
                     ))
 
