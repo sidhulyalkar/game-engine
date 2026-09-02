@@ -5,6 +5,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from typing import Any
 
 
 def _retry_delay(exc: Exception, attempt: int) -> float:
@@ -22,6 +23,27 @@ def _retry_delay(exc: Exception, attempt: int) -> float:
     return min(12.0, 2.0 * (2**attempt))
 
 
+def _compact_error_body(exc: urllib.error.HTTPError, limit: int = 1200) -> str | None:
+    """Return a bounded diagnostic body without exposing request credentials."""
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:
+        return None
+    if not body:
+        return None
+    body = " ".join(body.split())
+    return body[:limit] + ("…" if len(body) > limit else "")
+
+
+class CompletionText(str):
+    """String-compatible provider output with non-invasive completion provenance."""
+
+    def __new__(cls, content: str, metadata: dict[str, Any] | None = None):
+        obj = super().__new__(cls, content)
+        obj.completion_metadata = dict(metadata or {})
+        return obj
+
+
 class OpenAICompatibleClient:
     """Dependency-free adapter for OpenAI-compatible chat-completions endpoints."""
 
@@ -33,7 +55,7 @@ class OpenAICompatibleClient:
         api_key_env: str,
         timeout: int = 180,
         temperature: float = 0.9,
-        top_p: float = 0.95,
+        top_p: float | None = 0.95,
         max_tokens: int = 8192,
         retries: int = 3,
         extra_body: dict | None = None,
@@ -50,17 +72,21 @@ class OpenAICompatibleClient:
         self.extra_body = dict(extra_body or {})
 
     def _payload(self, system: str, prompt: str) -> bytes:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "temperature": self.temperature,
-            "top_p": self.top_p,
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        # Some OpenAI-compatible models expose temperature but explicitly fix top_p.
+        # `null` in provider config means omit the parameter entirely rather than
+        # sending JSON null to an endpoint that may reject the field.
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
         payload.update(self.extra_body)
         return json.dumps(payload).encode()
 
@@ -75,7 +101,7 @@ class OpenAICompatibleClient:
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                "User-Agent": "game-engine/0.1 autonomous-studio",
+                "User-Agent": "game-engine/0.2 autonomous-studio",
             },
             method="POST",
         )
@@ -84,20 +110,45 @@ class OpenAICompatibleClient:
         for attempt in range(self.retries + 1):
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    data = json.loads(response.read())
+                    raw = response.read()
+                    data = json.loads(raw)
+                    response_status = getattr(response, "status", 200)
+                    response_headers = getattr(response, "headers", None)
                 choices = data.get("choices") or []
                 if not choices:
                     raise RuntimeError("Provider returned no choices")
-                message = choices[0].get("message") or {}
+                choice = choices[0] or {}
+                message = choice.get("message") or {}
                 content = message.get("content")
                 if not isinstance(content, str) or not content.strip():
                     raise RuntimeError("Provider returned empty message content")
-                return content
+                usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+                request_id = None
+                if response_headers is not None:
+                    for header in ("x-request-id", "request-id", "x-nvidia-request-id"):
+                        value = response_headers.get(header)
+                        if value:
+                            request_id = str(value)
+                            break
+                metadata = {
+                    "model": data.get("model") or self.model,
+                    "http_status": response_status,
+                    "finish_reason": choice.get("finish_reason"),
+                    "usage": usage,
+                    "request_id": request_id,
+                    "content_chars": len(content),
+                    "reasoning_chars": len(message.get("reasoning_content") or "")
+                    if isinstance(message.get("reasoning_content"), str)
+                    else 0,
+                }
+                return CompletionText(content, metadata)
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 retryable = exc.code == 429 or 500 <= exc.code < 600
                 if not retryable or attempt >= self.retries:
-                    raise RuntimeError(f"Provider HTTP {exc.code} for model {self.model}") from exc
+                    detail = _compact_error_body(exc)
+                    suffix = f": {detail}" if detail else ""
+                    raise RuntimeError(f"Provider HTTP {exc.code} for model {self.model}{suffix}") from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 last_error = exc
                 if attempt >= self.retries:
