@@ -1,0 +1,112 @@
+name: Restart Evidence CI
+
+on:
+  push:
+    branches:
+      - agent/v0.3-gameplay-evidence
+    paths:
+      - '.github/workflows/restart-evidence-ci.yml'
+      - 'src/game_engine/restart_playtest.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/game_spec.py'
+      - 'tests/game_corpus/restart-good/**'
+      - 'tests/game_corpus/restart-stale/**'
+      - 'tests/test_restart_playtest.py'
+      - 'tests/test_game_spec.py'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'src/game_engine/restart_playtest.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/game_spec.py'
+      - 'tests/game_corpus/restart-good/**'
+      - 'tests/game_corpus/restart-stale/**'
+      - 'tests/test_restart_playtest.py'
+      - 'tests/test_game_spec.py'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restart-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install evidence lab
+        run: python -m pip install -e '.[reality]' pytest
+
+      - name: Unit contracts
+        run: pytest -q
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run known-good fresh restart
+        run: |
+          python -m game_engine.restart_playtest tests/game_corpus/restart-good \
+            --out /tmp/restart-good \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Qualify true fresh-run reset
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path('tests/game_corpus/restart-good/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/restart-good/restart-summary.json').read_text())
+          case = summary['cases'][0]
+          assert summary['restart_binding'] == expected['restart_binding'], summary
+          for key in (
+              'ok', 'pre_restart_mutated', 'independent_visual_mutation',
+              'restart_visual_response', 'visual_returned_to_baseline', 'restart_event_seen',
+          ):
+              assert case[key] is expected[key], (key, case)
+          assert case['violations'] == expected['violations'], case
+          assert 'restart-good' in summary['restart_pass_build_ids'], summary
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Run deceptive stale restart
+        run: |
+          python -m game_engine.restart_playtest tests/game_corpus/restart-stale \
+            --out /tmp/restart-stale \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Reject counter-only stale reset
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path('tests/game_corpus/restart-stale/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/restart-stale/restart-summary.json').read_text())
+          case = summary['cases'][0]
+          assert summary['restart_binding'] == expected['restart_binding'], summary
+          assert case['ok'] is expected['ok'], case
+          assert case['pre_restart_mutated'] is expected['pre_restart_mutated'], case
+          assert case['independent_visual_mutation'] is expected['independent_visual_mutation'], case
+          assert case['restart_visual_response'] is expected['restart_visual_response'], case
+          assert case['restart_event_seen'] is expected['restart_event_seen'], case
+          text = '\n'.join(case['violations'])
+          for needle in expected['required_violation_substrings']:
+              assert needle in text, (needle, case)
+          assert 'restart-stale' in summary['restart_fail_build_ids'], summary
+          assert 'restart-stale' not in summary['restart_pass_build_ids'], summary
+          print(json.dumps(summary, indent=2))
+          PY
