@@ -124,11 +124,7 @@ def compile_input_program(
     hold_ms: int = 160,
     max_actions: int = 3,
 ) -> list[InputProgramStep]:
-    """Compile structured GameSpec actions into a reproducible browser-input program.
-
-    Unsupported required actions fail closed. Optional unsupported actions are skipped.
-    This keeps the executor honest as later Mobile/WebXR action kinds arrive.
-    """
+    """Compile structured GameSpec actions into a reproducible browser-input program."""
     if hold_ms < 20 or hold_ms > 2000:
         raise ActionPlanError("hold_ms must be between 20 and 2000")
     if len(actions) > max_actions:
@@ -185,13 +181,19 @@ def action_boundaries(program: list[InputProgramStep]) -> list[dict[str, Any]]:
     return boundaries
 
 
-def _pixel_target(target: tuple[float, float] | None, width: int, height: int) -> tuple[int, int]:
+def _pixel_target(
+    target: tuple[float, float] | None,
+    width: int,
+    height: int,
+    origin_x: int = 0,
+    origin_y: int = 0,
+) -> tuple[int, int]:
     if target is None:
         raise ActionPlanError("pointer command is missing pointer_target")
     x, y = target
     if not 0 <= x <= 1 or not 0 <= y <= 1:
         raise ActionPlanError(f"normalized pointer target out of range: {target}")
-    return int(round(x * width)), int(round(y * height))
+    return origin_x + int(round(x * width)), origin_y + int(round(y * height))
 
 
 def step_label(step: InputProgramStep) -> str:
@@ -206,15 +208,34 @@ def execute_input_program(
     *,
     viewport_width: int,
     viewport_height: int,
+    pointer_origin_x: int = 0,
+    pointer_origin_y: int = 0,
     mark: Callable[[str], None] | None = None,
     sample: Callable[[], None] | None = None,
     settle_ms: int = 80,
 ) -> None:
-    """Execute an abstract input program against a Playwright-like page."""
+    """Execute an abstract input program against a Playwright-like page.
+
+    `viewport_width`/`viewport_height` describe the active pointer surface, which is
+    normally the largest visible game canvas. `pointer_origin_*` anchors that surface
+    inside the browser viewport. Callers without a canvas can use the full viewport by
+    leaving the origin at zero.
+    """
     if viewport_width <= 0 or viewport_height <= 0:
         raise ActionPlanError("viewport dimensions must be positive")
+    if pointer_origin_x < 0 or pointer_origin_y < 0:
+        raise ActionPlanError("pointer surface origin must be non-negative")
     if settle_ms < 0 or settle_ms > 5000:
         raise ActionPlanError("settle_ms must be between 0 and 5000")
+
+    def target(step: InputProgramStep) -> tuple[int, int]:
+        return _pixel_target(
+            step.pointer_target,
+            viewport_width,
+            viewport_height,
+            pointer_origin_x,
+            pointer_origin_y,
+        )
 
     for step in program:
         if step.command == "key_down":
@@ -230,19 +251,19 @@ def execute_input_program(
         elif step.command == "pointer_click":
             if not step.binding:
                 raise ActionPlanError(f"{step.action_id}: pointer_click missing binding")
-            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            x, y = target(step)
             page.mouse.click(x, y, button=_pointer_button(step.binding))
         elif step.command == "pointer_down":
-            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            x, y = target(step)
             page.mouse.move(x, y)
             page.mouse.down(button=_pointer_button(step.binding or "PrimaryPointer"))
         elif step.command == "pointer_move":
-            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            x, y = target(step)
             page.mouse.move(x, y, steps=6)
             if step.duration_ms:
                 page.wait_for_timeout(step.duration_ms)
         elif step.command == "pointer_up":
-            x, y = _pixel_target(step.pointer_target, viewport_width, viewport_height)
+            x, y = target(step)
             page.mouse.move(x, y)
             page.mouse.up(button=_pointer_button(step.binding or "PrimaryPointer"))
         else:
