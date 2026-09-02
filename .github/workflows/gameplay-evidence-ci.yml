@@ -139,3 +139,33 @@ jobs:
           assert 'telemetry-liar' not in summary['independently_observable_build_ids'], summary
           print(json.dumps(summary, indent=2))
           PY
+
+      - name: Run autoplay causal-adversary fixture
+        run: |
+          python -m game_engine.visual_playtest tests/game_corpus/autoplay \
+            --out /tmp/autoplay-evidence \
+            --browsers chromium \
+            --sample-interval-ms 120
+
+      - name: Reject autoplay as independent player agency
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path('tests/game_corpus/autoplay/case.json').read_text())['expected']
+          summary = json.loads(Path('/tmp/autoplay-evidence/playtest-summary.json').read_text())
+          build = next(row for row in summary['builds'] if row['build_id'] == 'autoplay')
+          null = build['policies']['chromium']['null']
+          sweep = build['policies']['chromium']['sweep']
+          assert build['instrumented'] is expected['instrumented'], build
+          assert build['mechanically_observable'] is expected['mechanically_observable'], build
+          assert build['independent_visual_response'] is expected['independent_visual_response'], build
+          assert build['independently_observable'] is expected['independently_observable'], build
+          assert build['telemetry_visual_contradiction'] is expected['telemetry_visual_contradiction'], build
+          assert build['violations'] == expected['violations'], build
+          assert (sweep['core_mechanic_activations'] or 0) >= expected['active_core_mechanic_activations_min'], sweep
+          assert sweep['visible_change_fraction'] <= null['visible_change_fraction'] + 0.05, (null, sweep)
+          assert 'autoplay' not in summary['independently_observable_build_ids'], summary
+          assert 'autoplay' in summary['telemetry_visual_contradiction_build_ids'], summary
+          print(json.dumps(summary, indent=2))
+          PY
