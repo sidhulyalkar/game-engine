@@ -26,22 +26,37 @@ def _desktop_actions(controls: str) -> list[dict[str, Any]]:
 
     movement_words = ("move", "steer", "walk", "run", "orbit", "strafe", "drive", "slide")
     if "wasd" in text or "arrow" in text or any(word in text for word in movement_words):
-        actions.append({
-            "id": "move",
-            "kind": "keyboard_vector",
-            "bindings": {
-                "up": ["w", "ArrowUp"],
-                "left": ["a", "ArrowLeft"],
-                "down": ["s", "ArrowDown"],
-                "right": ["d", "ArrowRight"],
-            },
-            "semantics": "hold",
-            "required": True,
-            "source": "exact" if ("wasd" in text or "arrow" in text) else "integrator-default",
-        })
+        # Do not infer keyboard movement from phrases that clearly describe mouse
+        # movement. This matters for mirrored-pointer games such as Prism Duet.
+        mouse_movement = any(phrase in text for phrase in (
+            "mouse move", "mouse moves", "move mouse", "move the mouse",
+            "cursor move", "cursor moves", "move cursor", "move the cursor",
+            "pointer move", "pointer moves", "move pointer", "move the pointer",
+        ))
+        if not mouse_movement or "wasd" in text or "arrow" in text:
+            actions.append({
+                "id": "move",
+                "kind": "keyboard_vector",
+                "bindings": {
+                    "up": ["w", "ArrowUp"],
+                    "left": ["a", "ArrowLeft"],
+                    "down": ["s", "ArrowDown"],
+                    "right": ["d", "ArrowRight"],
+                },
+                "semantics": "hold",
+                "required": True,
+                "source": "exact" if ("wasd" in text or "arrow" in text) else "integrator-default",
+            })
 
-    pointer_drag = any(word in text for word in ("drag", "mouse aim", "pointer", "cursor"))
-    pointer_click = any(word in text for word in ("click", "mouse button"))
+    pointer_drag = any(phrase in text for phrase in (
+        "mouse drag", "drag mouse", "drag the mouse", "pointer drag", "drag pointer",
+        "drag the pointer", "cursor drag", "drag cursor", "drag the cursor",
+    )) or ("drag" in text and any(word in text for word in ("mouse", "pointer", "cursor")))
+    pointer_move = any(phrase in text for phrase in (
+        "mouse move", "mouse moves", "move mouse", "move the mouse", "mouse aim", "aim with mouse",
+        "cursor move", "cursor moves", "move cursor", "move the cursor", "aim with cursor",
+        "pointer move", "pointer moves", "move pointer", "move the pointer", "aim with pointer",
+    ))
     if pointer_drag:
         actions.append({
             "id": "pointer",
@@ -51,11 +66,37 @@ def _desktop_actions(controls: str) -> list[dict[str, Any]]:
             "required": True,
             "source": "exact",
         })
-    elif pointer_click:
+    elif pointer_move:
+        actions.append({
+            "id": "pointer",
+            "kind": "pointer_move",
+            "bindings": ["PointerMotion"],
+            "semantics": "move",
+            "required": True,
+            "source": "exact",
+        })
+
+    left_click = any(phrase in text for phrase in (
+        "left click", "left-click", "primary click", "primary mouse", "primary button",
+    ))
+    right_click = any(phrase in text for phrase in (
+        "right click", "right-click", "secondary click", "secondary mouse", "secondary button",
+    ))
+    generic_click = ("click" in text or "mouse button" in text) and not left_click and not right_click
+    if left_click or generic_click:
         actions.append({
             "id": "primary",
             "kind": "pointer_click",
             "bindings": ["PrimaryPointer"],
+            "semantics": "press",
+            "required": True,
+            "source": "exact",
+        })
+    if right_click:
+        actions.append({
+            "id": "secondary",
+            "kind": "pointer_click",
+            "bindings": ["SecondaryPointer"],
             "semantics": "press",
             "required": True,
             "source": "exact",
