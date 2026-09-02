@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/evidence-broker-ci.yml'
       - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
       - 'src/game_engine/action_policy.py'
       - 'src/game_engine/playtest.py'
@@ -16,11 +17,13 @@ on:
       - 'src/game_engine/game_spec.py'
       - 'src/game_engine/schema.py'
       - 'tests/game_corpus/restart-good/**'
+      - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
       - 'pyproject.toml'
   pull_request:
     paths:
       - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/source_audit.py'
       - 'src/game_engine/action_causality.py'
       - 'src/game_engine/action_policy.py'
       - 'src/game_engine/playtest.py'
@@ -30,6 +33,7 @@ on:
       - 'src/game_engine/game_spec.py'
       - 'src/game_engine/schema.py'
       - 'tests/game_corpus/restart-good/**'
+      - 'tests/game_corpus/restart-stale/**'
       - 'tests/test_evidence_broker.py'
       - 'pyproject.toml'
 
@@ -43,7 +47,7 @@ concurrency:
 jobs:
   chromium-broker:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,28 +63,26 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
 
-      - name: Build synthetic Browser Reality qualification
+      - name: Build synthetic Browser Reality qualifications
         run: |
-          mkdir -p /tmp/reality
-          cat > /tmp/reality/qualification.json <<'JSON'
-          {
-            "browsers": ["chromium", "firefox", "webkit"],
-            "full_pass_build_ids": ["restart-good"],
-            "matrix": {
-              "restart-good": {"chromium": true, "firefox": true, "webkit": true}
-            },
-            "initial_text_matrix": {
-              "restart-good": {"chromium": "", "firefox": "", "webkit": ""}
-            }
-          }
-          JSON
-          cat > /tmp/reality/reality.json <<'JSON'
-          [
-            {"build_id":"restart-good","provider":"fixture","browser":"chromium","ok":true},
-            {"build_id":"restart-good","provider":"fixture","browser":"firefox","ok":true},
-            {"build_id":"restart-good","provider":"fixture","browser":"webkit","ok":true}
-          ]
-          JSON
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for build_id, root in [('restart-good','/tmp/reality-good'), ('restart-stale','/tmp/reality-stale')]:
+              p = Path(root); p.mkdir(parents=True, exist_ok=True)
+              q = {
+                  'browsers':['chromium','firefox','webkit'],
+                  'full_pass_build_ids':[build_id],
+                  'matrix':{build_id:{'chromium':True,'firefox':True,'webkit':True}},
+                  'initial_text_matrix':{build_id:{'chromium':'','firefox':'','webkit':''}},
+              }
+              (p/'qualification.json').write_text(json.dumps(q))
+              rows = [
+                  {'build_id':build_id,'provider':'fixture','browser':browser,'ok':True}
+                  for browser in ('chromium','firefox','webkit')
+              ]
+              (p/'reality.json').write_text(json.dumps(rows))
+          PY
 
       - name: Run behavioral evidence broker
         run: |
@@ -92,7 +94,7 @@ jobs:
           result = EvidenceBroker(browsers=('chromium',), sample_interval_ms=120).run(
               Path('tests/game_corpus/restart-good'),
               Path('/tmp/broker'),
-              Path('/tmp/reality'),
+              Path('/tmp/reality-good'),
           )
           print(json.dumps(result, indent=2))
           assert result['all_probes_completed'] is True, result
@@ -101,4 +103,58 @@ jobs:
           q = json.loads(Path('/tmp/broker/critic-reality/qualification.json').read_text())
           assert q['full_pass_build_ids'] == ['restart-good'], q
           assert q['behavioral_gate_applied'] is True, q
+          PY
+
+      - name: Prove source critics run only after behavior qualifies
+        run: |
+          python - <<'PY'
+          import json
+          from dataclasses import dataclass
+          from pathlib import Path
+          from game_engine.schema import Brief, Concept
+          from game_engine.source_audit import DIMENSIONS, SourceGameplayLab
+
+          @dataclass
+          class Spec:
+              name: str
+
+          class Critic:
+              def __init__(self): self.calls = 0
+              def complete(self, system, prompt):
+                  self.calls += 1
+                  return json.dumps({
+                      'scores': {name: 8 for name in DIMENSIONS},
+                      'verdict': 'advance',
+                      'summary': 'clean fixture',
+                      'findings': [],
+                  })
+
+          brief = Brief(theme='Unicorns and Rainbows')
+          concept = Concept(
+              concept_id='fixture', title='Fixture', hook='fixture', core_mechanic='press to mutate',
+              player_goal='mutate then restart', controls='Space', core_loop=['press','restart'],
+              escalation=['repeat'], visual_grammar='canvas', audio_grammar='bleep',
+              category_fit=['desktop'], byte_hypothesis='tiny', risks=[], tags=[]
+          )
+
+          good_a, good_b = Critic(), Critic()
+          good = SourceGameplayLab([(Spec('critic-a'), good_a), (Spec('critic-b'), good_b)], max_workers=2).run(
+              brief, concept,
+              Path('tests/game_corpus/restart-good'), Path('/tmp/audit-good'), Path('/tmp/reality-good')
+          )
+          assert good_a.calls == 1 and good_b.calls == 1, (good_a.calls, good_b.calls, good)
+          assert good['behaviorally_qualified_build_ids'] == ['restart-good'], good
+          assert good['llm_critic_eligible_build_ids'] == ['restart-good'], good
+          assert good['advance_build_ids'] == ['restart-good'], good
+
+          stale_a, stale_b = Critic(), Critic()
+          stale = SourceGameplayLab([(Spec('critic-a'), stale_a), (Spec('critic-b'), stale_b)], max_workers=2).run(
+              brief, concept,
+              Path('tests/game_corpus/restart-stale'), Path('/tmp/audit-stale'), Path('/tmp/reality-stale')
+          )
+          assert stale_a.calls == 0 and stale_b.calls == 0, (stale_a.calls, stale_b.calls, stale)
+          assert stale['llm_critic_eligible_build_ids'] == [], stale
+          assert stale['behavioral_repair_build_ids'] == ['restart-stale'], stale
+          assert stale['advance_build_ids'] == [], stale
+          print(json.dumps({'good':good,'stale':stale}, indent=2))
           PY
