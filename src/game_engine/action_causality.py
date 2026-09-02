@@ -14,6 +14,18 @@ from .structured_playtest import _POINTER_SURFACE_JS
 from .visual_playtest import CanvasAwareGameplayEvidenceLab
 
 
+_SEMANTIC_FIELDS = (
+    "state",
+    "alive",
+    "game_over",
+    "score",
+    "progress",
+    "entity_count",
+    "progression_transitions",
+    "restart_count",
+)
+
+
 @dataclass(slots=True)
 class ActionTrial:
     build_id: str
@@ -39,6 +51,9 @@ class ActionTrial:
     violations: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
+    matched_control: bool = False
+    control_meaningful_state_change: bool = False
+    control_visual_change: bool = False
 
 
 @dataclass(slots=True)
@@ -61,6 +76,46 @@ def _delta(before: dict[str, Any], after: dict[str, Any], key: str) -> float | N
 
 def _event_count(events: list[dict[str, Any]], event_type: str) -> int:
     return sum(str(row.get("type")) == event_type for row in events)
+
+
+def _transition_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    return any(before.get(key) != after.get(key) for key in _SEMANTIC_FIELDS)
+
+
+def _causal_semantic_change(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    control_before: dict[str, Any] | None,
+    control_after: dict[str, Any] | None,
+) -> bool:
+    """Return true only for semantic effects not explained by a matched idle trial."""
+    if control_before is None or control_after is None:
+        return _transition_changed(before, after)
+
+    for key in _SEMANTIC_FIELDS:
+        a0, a1 = before.get(key), after.get(key)
+        c0, c1 = control_before.get(key), control_after.get(key)
+        numeric = (
+            not isinstance(a0, bool)
+            and not isinstance(a1, bool)
+            and not isinstance(c0, bool)
+            and not isinstance(c1, bool)
+            and _finite_number(a0)
+            and _finite_number(a1)
+            and _finite_number(c0)
+            and _finite_number(c1)
+        )
+        if numeric:
+            active_delta = float(a1) - float(a0)
+            control_delta = float(c1) - float(c0)
+            if abs(active_delta - control_delta) > 1e-6:
+                return True
+            continue
+        active_transition = (a0, a1)
+        control_transition = (c0, c1)
+        if a0 != a1 and active_transition != control_transition:
+            return True
+    return False
 
 
 def split_action_trials(program: list[InputProgramStep]) -> list[list[InputProgramStep]]:
@@ -109,6 +164,10 @@ def assess_action_trial(
     before_visible_hash: str,
     after_visible_hash: str,
     required: bool,
+    control_before: dict[str, Any] | None = None,
+    control_after: dict[str, Any] | None = None,
+    control_before_visible_hash: str | None = None,
+    control_after_visible_hash: str | None = None,
 ) -> tuple[bool, bool, bool, bool, list[str], list[str]]:
     violations: list[str] = []
     warnings: list[str] = []
@@ -124,25 +183,27 @@ def assess_action_trial(
     # state_hash are trivial for generated code to increment on any event. They remain
     # diagnostic output, but a required binding must alter stronger game semantics or
     # independent pixels to count as meaningful.
-    meaningful_fields = (
-        "state",
-        "alive",
-        "game_over",
-        "score",
-        "progress",
-        "entity_count",
-        "progression_transitions",
-        "restart_count",
+    meaningful_state_change = _causal_semantic_change(before, after, control_before, control_after)
+    active_visual_change = before_visible_hash != after_visible_hash
+    matched_visual_change = (
+        control_before_visible_hash is not None
+        and control_after_visible_hash is not None
+        and control_before_visible_hash != control_after_visible_hash
     )
-    meaningful_state_change = any(before.get(key) != after.get(key) for key in meaningful_fields)
-    independent_visual_change = before_visible_hash != after_visible_hash
+    independent_visual_change = active_visual_change and not matched_visual_change
+
+    if control_before is not None and control_after is not None:
+        if _transition_changed(control_before, control_after):
+            warnings.append("matched idle trial changed gameplay state; active effect was baseline-subtracted")
+        if matched_visual_change:
+            warnings.append("matched idle trial changed pixels; visual change alone cannot certify this action")
 
     if required and not accepted:
         violations.append("required advertised binding was not accepted by gameplay")
     if required and not meaningful_state_change and not independent_visual_change:
-        violations.append("required advertised binding produced no meaningful gameplay effect")
+        violations.append("required advertised binding produced no causal gameplay effect beyond matched idle")
     if accepted and not meaningful_state_change and not independent_visual_change:
-        warnings.append("input was acknowledged but only bookkeeping changed")
+        warnings.append("input was acknowledged but only bookkeeping or matched-idle effects changed")
 
     ok = not violations
     return ok, accepted, meaningful_state_change, independent_visual_change, sorted(set(violations)), sorted(set(warnings))
@@ -183,7 +244,7 @@ def summarize_action_trials(trials: list[ActionTrial], browsers: list[str]) -> d
         qualified = (
             bool(required_trials)
             and expected_browsers.issubset(observed_browsers)
-            and all(row.ok for row in required_trials)
+            and all(row.ok and row.matched_control for row in required_trials)
         )
         build_rows.append({
             "build_id": build_id,
@@ -197,6 +258,7 @@ def summarize_action_trials(trials: list[ActionTrial], browsers: list[str]) -> d
     return {
         "browsers": browsers,
         "builds_tested": len(build_rows),
+        "causality_method": "fresh-state matched-idle subtraction v1",
         "action_causality_pass_build_ids": [row["build_id"] for row in build_rows if row["qualified"]],
         "action_causality_fail_build_ids": [row["build_id"] for row in build_rows if not row["qualified"]],
         "builds": build_rows,
@@ -204,7 +266,7 @@ def summarize_action_trials(trials: list[ActionTrial], browsers: list[str]) -> d
 
 
 class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
-    """Measure every authoritative binding independently from a fresh page state."""
+    """Measure every authoritative binding independently against a matched idle trial."""
 
     def __init__(
         self,
@@ -267,6 +329,32 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
         (output_dir / "action-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         return summary
 
+    def _prepare_page(self, browser, url: str, trial_program: list[InputProgramStep], warnings: list[str]):
+        context = browser.new_context(viewport={"width": self.viewport_width, "height": self.viewport_height})
+        page = context.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        page.wait_for_timeout(250)
+        surface = page.evaluate(_POINTER_SURFACE_JS)
+        if not isinstance(surface, dict):
+            context.close()
+            raise ActionPlanError("pointer surface probe returned no object")
+        surface_width = max(1, int(round(float(surface.get("width") or self.viewport_width))))
+        surface_height = max(1, int(round(float(surface.get("height") or self.viewport_height))))
+        origin_x = max(0, int(round(float(surface.get("x") or 0))))
+        origin_y = max(0, int(round(float(surface.get("y") or 0))))
+        if surface.get("source") != "canvas" and any(step.kind.startswith("pointer_") for step in trial_program):
+            warnings.append("no visible canvas detected; action trial used viewport pointer fallback")
+
+        setup_step = _pointer_setup_step(trial_program)
+        if setup_step is not None and setup_step.pointer_target is not None:
+            tx, ty = setup_step.pointer_target
+            page.mouse.move(
+                origin_x + int(round(tx * surface_width)),
+                origin_y + int(round(ty * surface_height)),
+            )
+            page.wait_for_timeout(max(60, min(160, self.sample_interval_ms)))
+        return context, page, surface_width, surface_height, origin_x, origin_y
+
     def _run_trial(
         self,
         playwright,
@@ -278,37 +366,17 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
         boundary = trial_program[-1]
         required = self.action_required.get(boundary.action_id, True)
         browser = None
+        active_context = None
+        control_context = None
         warnings: list[str] = []
         started = time.perf_counter()
         try:
             browser_type = getattr(playwright, browser_name)
             browser = browser_type.launch(headless=True)
-            context = browser.new_context(viewport={"width": self.viewport_width, "height": self.viewport_height})
-            page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-            page.wait_for_timeout(250)
+            active_context, page, surface_width, surface_height, origin_x, origin_y = self._prepare_page(
+                browser, url, trial_program, warnings
+            )
             started = time.perf_counter()
-
-            surface = page.evaluate(_POINTER_SURFACE_JS)
-            if not isinstance(surface, dict):
-                raise ActionPlanError("pointer surface probe returned no object")
-            surface_width = max(1, int(round(float(surface.get("width") or self.viewport_width))))
-            surface_height = max(1, int(round(float(surface.get("height") or self.viewport_height))))
-            origin_x = max(0, int(round(float(surface.get("x") or 0))))
-            origin_y = max(0, int(round(float(surface.get("y") or 0))))
-            if surface.get("source") != "canvas" and any(step.kind.startswith("pointer_") for step in trial_program):
-                warnings.append("no visible canvas detected; action trial used viewport pointer fallback")
-
-            setup_step = _pointer_setup_step(trial_program)
-            if setup_step is not None and setup_step.pointer_target is not None:
-                tx, ty = setup_step.pointer_target
-                setup_x = origin_x + int(round(tx * surface_width))
-                setup_y = origin_y + int(round(ty * surface_height))
-                page.mouse.move(setup_x, setup_y)
-                page.wait_for_timeout(max(60, min(160, self.sample_interval_ms)))
-
-            # Baseline is captured after non-causal pointer setup so a click cannot
-            # borrow evidence from the movement Playwright performs to reach its target.
             before, present, schema_version, errors = self._sample(page, started)
             if not present or errors:
                 raise ValueError("; ".join(errors or ["missing telemetry API"]))
@@ -338,6 +406,26 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
                 raise ValueError(f"action trial expected exactly one boundary sample, got {len(after_samples)}")
             after = after_samples[0]
             response_ms = round((time.perf_counter() - action_started) * 1000, 2)
+            active_context.close()
+            active_context = None
+
+            # Fresh-state matched null: reproduce loading and non-causal pointer setup,
+            # then idle for the observed duration of the intervention. This is a strict
+            # lower-bound assay: if ambient animation/timers produce the same effect,
+            # the action cannot claim that evidence.
+            control_context, control_page, _, _, _, _ = self._prepare_page(
+                browser, url, trial_program, warnings
+            )
+            control_started = time.perf_counter()
+            control_before, present, schema_version, control_errors = self._sample(control_page, control_started)
+            if not present or control_errors:
+                raise ValueError("matched control: " + "; ".join(control_errors or ["missing telemetry API"]))
+            if schema_version != "0.1":
+                raise ValueError(f"matched control unsupported telemetry schema version: {schema_version!r}")
+            control_page.wait_for_timeout(max(1, int(round(response_ms))))
+            control_after, _, _, control_errors = self._sample(control_page, control_started)
+            if control_errors:
+                raise ValueError("matched control: " + "; ".join(control_errors))
 
             assessed = assess_action_trial(
                 before.snapshot,
@@ -347,12 +435,21 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
                 before_visible_hash=before.visible_hash,
                 after_visible_hash=after.visible_hash,
                 required=required,
+                control_before=control_before.snapshot,
+                control_after=control_after.snapshot,
+                control_before_visible_hash=control_before.visible_hash,
+                control_after_visible_hash=control_after.visible_hash,
             )
             ok, accepted, meaningful_change, visible_change, violations, assessment_warnings = assessed
             warnings.extend(assessment_warnings)
             before_snapshot = before.snapshot or {}
             after_snapshot = after.snapshot or {}
-            context.close()
+            control_before_snapshot = control_before.snapshot or {}
+            control_after_snapshot = control_after.snapshot or {}
+            control_semantic = _transition_changed(control_before_snapshot, control_after_snapshot)
+            control_visual = control_before.visible_hash != control_after.visible_hash
+            control_context.close()
+            control_context = None
             return ActionTrial(
                 build_id=str(build.get("build_id")),
                 provider=str(build.get("provider", "unknown")),
@@ -376,6 +473,9 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
                 after_state_hash=str(after_snapshot.get("state_hash")) if after_snapshot.get("state_hash") is not None else None,
                 violations=violations,
                 warnings=sorted(set(warnings)),
+                matched_control=True,
+                control_meaningful_state_change=control_semantic,
+                control_visual_change=control_visual,
             )
         except Exception as exc:
             return ActionTrial(
@@ -404,6 +504,12 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
                 error=f"{type(exc).__name__}: {exc}",
             )
         finally:
+            for context in (active_context, control_context):
+                if context is not None:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
             if browser is not None:
                 try:
                     browser.close()
