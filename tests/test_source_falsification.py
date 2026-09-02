@@ -51,6 +51,21 @@ canvas.addEventListener('click',()=>{if(!sim.playing)reset()});
 """
 
 
+RUN61_RESTART_AND_SEED = r"""
+<script>
+const SEED=Date.now();
+function rng(){return (SEED*16807)%2147483647/2147483647}
+window.__GAME_ENGINE_TELEMETRY__={schema_version:'0.1',snapshot:()=>({score:0}),events:()=>[]};
+let alive=true,time=0;
+function update(dt){void dt;void rng()}
+function loop(t){const dt=Math.min(.05,(t-time)/1000);time=t;update(dt);requestAnimationFrame(loop)}
+function start(){alive=true;time=performance.now();requestAnimationFrame(loop)}
+window.addEventListener('keydown',e=>{if(e.key==='r'||e.key==='R')start()});
+start();
+</script>
+"""
+
+
 def test_run60_orbiting_aurora_is_falsified_without_model_judgment():
     report = analyze_source(RUN60_ORBITING_AURORA, run60_spec())
     codes = {row["code"] for row in report["findings"]}
@@ -89,6 +104,29 @@ def test_nested_timer_counter_arithmetic_exposes_100_second_escalation():
     assert cycles[0]["timer"] == "sim.tensionTime"
     assert cycles[0]["counter"] == "sim.tension"
     assert cycles[0]["estimated_seconds"] == 100.0
+
+
+def test_run61_wall_clock_seed_and_duplicate_restart_loop_are_falsified():
+    report = analyze_source(RUN61_RESTART_AND_SEED, run60_spec())
+    codes = {row["code"] for row in report["findings"]}
+    assert report["qualified"] is False
+    assert "wall_clock_seed" in codes
+    assert "restart_spawns_duplicate_raf" in codes
+    assert "constant_prng_state" in codes
+
+
+def test_constant_prng_state_is_diagnostic_but_not_by_itself_a_hard_gate():
+    source = RUN61_RESTART_AND_SEED.replace("const SEED=Date.now();", "const SEED=7;").replace(
+        "function start(){alive=true;time=performance.now();requestAnimationFrame(loop)}",
+        "function start(){alive=true;time=performance.now()}",
+    )
+    report = analyze_source(source, run60_spec())
+    codes = {row["code"] for row in report["findings"]}
+    assert "constant_prng_state" in codes
+    assert "wall_clock_seed" not in codes
+    assert "restart_spawns_duplicate_raf" not in codes
+    assert report["blockers"] == 0
+    assert report["qualified"] is True
 
 
 def test_clean_source_can_reach_human_or_llm_judgment():
