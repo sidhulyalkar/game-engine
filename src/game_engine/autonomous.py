@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import build_clients, load_provider_specs
+from .evidence_broker import EvidenceBroker
 from .orchestrator import Studio
 from .prototype import PrototypeForge
 from .reality import BrowserRealityLab
@@ -126,17 +127,62 @@ def _cross_browser_field(paths: TournamentPaths) -> tuple[list[tuple[str, str]],
     return full_pass, matrices, sorted(set(semantic_divergence))
 
 
+def _behavioral_field(
+    paths: TournamentPaths,
+) -> tuple[list[tuple[str, str]], list[str], list[str], dict[str, Any], dict[str, Any]]:
+    qualified: list[tuple[str, str]] = []
+    repair: list[str] = []
+    insufficient: list[str] = []
+    matrix: dict[str, Any] = {}
+    probe_errors: dict[str, Any] = {}
+    for race in ("a", "b"):
+        summary_path = paths.child(f"behavior-{race}") / "evidence-broker.json"
+        if not summary_path.exists():
+            continue
+        payload = json.loads(summary_path.read_text())
+        matrix[race] = payload.get("decisions", [])
+        qualified.extend(
+            (race, str(build_id))
+            for build_id in payload.get("behaviorally_qualified_build_ids", [])
+        )
+        repair.extend(
+            f"{race}:{build_id}"
+            for build_id in payload.get("behavioral_repair_build_ids", [])
+        )
+        insufficient.extend(
+            f"{race}:{build_id}"
+            for build_id in payload.get("insufficient_evidence_build_ids", [])
+        )
+        errors = payload.get("probe_errors") or {}
+        if errors:
+            probe_errors[race] = errors
+    return (
+        qualified,
+        sorted(set(repair)),
+        sorted(set(insufficient)),
+        matrix,
+        probe_errors,
+    )
+
+
+def _critic_reality_root(paths: TournamentPaths, race: str) -> Path:
+    behavioral = paths.child(f"behavior-{race}") / "critic-reality"
+    if (behavioral / "qualification.json").exists():
+        return behavioral
+    return paths.child(f"reality-{race}")
+
+
 def _audit_field(paths: TournamentPaths) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]:
     qualified: list[tuple[str, dict[str, Any]]] = []
     matrix: dict[str, Any] = {}
     for race in ("a", "b"):
-        q_path = paths.child(f"reality-{race}") / "qualification.json"
+        q_path = _critic_reality_root(paths, race) / "qualification.json"
         a_path = paths.child(f"audit-{race}") / "audit-summary.json"
         if not q_path.exists() or not a_path.exists():
             continue
-        allowed = set(json.loads(q_path.read_text()).get("full_pass_build_ids", []))
+        allowed = {str(value) for value in json.loads(q_path.read_text()).get("full_pass_build_ids", [])}
         audit = json.loads(a_path.read_text())
-        rows = [row for row in audit.get("ranking", []) if row.get("build_id") in allowed]
+        rows = [row for row in audit.get("ranking", []) if str(row.get("build_id")) in allowed]
         matrix[race] = rows
         qualified.extend((race, row) for row in rows if int(row.get("critic_count", 0)) >= 2)
     return qualified, matrix
@@ -227,7 +273,7 @@ def run_autonomous_tournament(
         if not primary_health["usable"]:
             raise TournamentFailure("primary-health", f"primary swarm is unusable: {primary_health}")
         if primary_health["rescue_required"] and not primary_health["rescue_plannable"]:
-            raise TournamentFailure("primary-health", f"primary is degraded but no configured rescue can repair it: {primary_health}")
+            raise TournamentFailure("primary-health", f"primary requires rescue but no configured rescue can repair it: {primary_health}")
 
         rescue_used = False
         generated_rescue = health_dir / "rescue.generated.json"
@@ -262,7 +308,7 @@ def run_autonomous_tournament(
         )
         journal.record("final-swarm-health", final_health["status"], **final_health)
         if not final_health["qualified"]:
-            raise TournamentFailure("final-swarm-health", f"heterogeneous concept evidence did not qualify: {final_health}")
+            raise TournamentFailure("final-swarm-health", f"concept evidence did not reach role/assignment quorum: {final_health}")
 
         sources = {"primary": paths.child("swarm-primary") / "leaderboard.json"}
         if rescue_used:
@@ -334,6 +380,67 @@ def run_autonomous_tournament(
             raise TournamentFailure("cross-browser-field", f"no implementation passed all browsers: {matrices}")
         journal.record("cross-browser-field", "passed", survivors=[f"{race}:{build}" for race, build in full_pass])
 
+        for race in ("a", "b"):
+            reality_path = paths.child(f"reality-{race}") / "qualification.json"
+            if not reality_path.exists() or not json.loads(reality_path.read_text()).get("full_pass_build_ids"):
+                journal.record(f"behavioral-evidence-{race}", "skipped", reason="no cross-browser survivor in race")
+                continue
+            try:
+                behavioral = EvidenceBroker(
+                    browsers=("chromium",),
+                    sample_interval_ms=160,
+                ).run(
+                    paths.child(f"builds-{race}"),
+                    paths.child(f"behavior-{race}"),
+                    paths.child(f"reality-{race}"),
+                )
+                journal.record(
+                    f"behavioral-evidence-{race}",
+                    "completed",
+                    behaviorally_qualified_build_ids=behavioral.get("behaviorally_qualified_build_ids", []),
+                    behavioral_repair_build_ids=behavioral.get("behavioral_repair_build_ids", []),
+                    insufficient_evidence_build_ids=behavioral.get("insufficient_evidence_build_ids", []),
+                    probe_errors=behavioral.get("probe_errors", {}),
+                )
+            except Exception as exc:
+                journal.record(f"behavioral-evidence-{race}", "error", error=f"{type(exc).__name__}: {exc}")
+
+        (
+            behaviorally_qualified,
+            behavioral_repair,
+            behavioral_insufficient,
+            behavioral_matrix,
+            behavioral_probe_errors,
+        ) = _behavioral_field(paths)
+        if not behaviorally_qualified:
+            if behavioral_repair:
+                raise TournamentFailure(
+                    "behavioral-evidence",
+                    "cross-browser builds require targeted behavioral repair before LLM criticism: "
+                    + json.dumps({
+                        "repair_build_ids": behavioral_repair,
+                        "insufficient_evidence_build_ids": behavioral_insufficient,
+                        "probe_errors": behavioral_probe_errors,
+                    }),
+                )
+            raise TournamentFailure(
+                "behavioral-evidence",
+                "no cross-browser implementation produced complete causal gameplay evidence: "
+                + json.dumps({
+                    "insufficient_evidence_build_ids": behavioral_insufficient,
+                    "probe_errors": behavioral_probe_errors,
+                    "matrix": behavioral_matrix,
+                }),
+            )
+        journal.record(
+            "behavioral-evidence",
+            "passed",
+            survivors=[f"{race}:{build}" for race, build in behaviorally_qualified],
+            repair_build_ids=behavioral_repair,
+            insufficient_evidence_build_ids=behavioral_insufficient,
+            probe_errors=behavioral_probe_errors,
+        )
+
         selection_payload = json.loads((paths.child("champion") / "selection.json").read_text())
         good_rows = [row for _, row in good]
         run_summary: dict[str, Any] = {
@@ -353,17 +460,27 @@ def run_autonomous_tournament(
             "smallest_survivor_bytes": min(row["compressed_bytes"] for row in good_rows),
             "largest_headroom_bytes": max(row["byte_headroom"] for row in good_rows),
             "browser_reality_lab_passed": True,
-            "competitive_field": len(full_pass) >= 2,
-            "promotion_blocked_until_gameplay_evidence": True,
+            "behavioral_evidence_lab_passed": True,
+            "behavioral_reference_browser": "chromium",
+            "behaviorally_qualified_build_ids": [
+                f"{race}:{build}" for race, build in behaviorally_qualified
+            ],
+            "behavioral_repair_build_ids": behavioral_repair,
+            "behavioral_insufficient_evidence_build_ids": behavioral_insufficient,
+            "behavioral_probe_errors": behavioral_probe_errors,
+            "behavioral_matrix": behavioral_matrix,
+            "competitive_field": len(behaviorally_qualified) >= 2,
+            "promotion_blocked_until_gameplay_audit": True,
         }
         (output_root / "run-summary.json").write_text(json.dumps(run_summary, indent=2) + "\n")
 
         audit_specs = load_provider_specs(audit_providers)
         audit_clients = build_clients(audit_specs)
         for race in ("a", "b"):
-            reality_path = paths.child(f"reality-{race}") / "qualification.json"
-            if not reality_path.exists() or not json.loads(reality_path.read_text()).get("full_pass_build_ids"):
-                journal.record(f"source-audit-{race}", "skipped", reason="no cross-browser survivor in race")
+            critic_reality = _critic_reality_root(paths, race)
+            qualification_path = critic_reality / "qualification.json"
+            if not qualification_path.exists() or not json.loads(qualification_path.read_text()).get("full_pass_build_ids"):
+                journal.record(f"source-audit-{race}", "skipped", reason="no behaviorally qualified build in race")
                 continue
             try:
                 audit = SourceGameplayLab(audit_clients, max_workers=4).run(
@@ -371,7 +488,7 @@ def run_autonomous_tournament(
                     concept,
                     paths.child(f"builds-{race}"),
                     paths.child(f"audit-{race}"),
-                    paths.child(f"reality-{race}"),
+                    critic_reality,
                 )
                 journal.record(
                     f"source-audit-{race}",
@@ -385,7 +502,7 @@ def run_autonomous_tournament(
 
         qualified_audits, audit_matrix = _audit_field(paths)
         if not qualified_audits:
-            raise TournamentFailure("gameplay-audit-evidence", f"no cross-browser build received two independent audits: {audit_matrix}")
+            raise TournamentFailure("gameplay-audit-evidence", f"no behaviorally qualified build received two independent audits: {audit_matrix}")
         journal.record("gameplay-audit-evidence", "passed", qualified=len(qualified_audits))
         run_summary["gameplay_audit_evidence"] = True
         run_summary["gameplay_audit_matrix"] = audit_matrix
@@ -393,7 +510,7 @@ def run_autonomous_tournament(
         run_summary["gameplay_repair_build_ids"] = [f"{race}:{row['build_id']}" for race, row in qualified_audits if row.get("status") == "repair"]
         run_summary["gameplay_reject_build_ids"] = [f"{race}:{row['build_id']}" for race, row in qualified_audits if row.get("status") == "reject"]
         run_summary["promotion_blocked_until_repair_and_playtest_loop"] = True
-        run_summary.pop("promotion_blocked_until_gameplay_evidence", None)
+        run_summary.pop("promotion_blocked_until_gameplay_audit", None)
         (output_root / "run-summary.json").write_text(json.dumps(run_summary, indent=2) + "\n")
 
         cycle_summaries: dict[str, Any] = {}
