@@ -67,9 +67,6 @@ jobs:
       - name: Unit and contract tests
         run: pytest -q
 
-      - name: Install browser engines
-        run: python -m playwright install --with-deps chromium firefox webkit
-
       - name: Run evidence-gated autonomous tournament
         run: |
           game-engine autonomous-tournament "$BRIEF" \
@@ -80,7 +77,8 @@ jobs:
             --build-providers studio.nvidia.build.json \
             --audit-providers studio.nvidia.audit.json \
             --repair-providers studio.nvidia.repair.json \
-            --browsers chromium,firefox,webkit
+            --browsers chromium,firefox,webkit \
+            --install-browsers-on-demand
 
       - name: Write Actions summary
         if: always()
