@@ -79,5 +79,26 @@ def test_exact_named_desktop_controls_are_preserved():
     assert actions[2]["source"] == "exact"
 
 
+def test_prism_like_controls_compile_to_pointer_motion_and_two_buttons():
+    actions = compile_actions(
+        "desktop",
+        "Mouse moves mirrored echoes; left click detonate; right click flip polarity.",
+    )
+    assert [row["id"] for row in actions] == ["pointer", "primary", "secondary"]
+    assert [row["kind"] for row in actions] == ["pointer_move", "pointer_click", "pointer_click"]
+    assert actions[0]["bindings"] == ["PointerMotion"]
+    assert actions[1]["bindings"] == ["PrimaryPointer"]
+    assert actions[2]["bindings"] == ["SecondaryPointer"]
+    assert all(row["source"] == "exact" for row in actions)
+    assert not any(row["kind"] == "keyboard_vector" for row in actions)
+
+
+def test_mouse_aim_without_drag_is_pointer_motion_not_drag():
+    actions = compile_actions("desktop", "Aim with mouse and left click to fire")
+    assert actions[0]["kind"] == "pointer_move"
+    assert actions[1]["kind"] == "pointer_click"
+    assert all(row["kind"] != "pointer_drag" for row in actions)
+
+
 def test_non_desktop_actions_wait_for_adaptation_specific_normalizer():
     assert compile_actions("webxr", "trigger to grab") == []
