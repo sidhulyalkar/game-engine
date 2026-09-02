@@ -18,6 +18,24 @@ def test_stage_journal_persists_incrementally_and_failure_artifact(tmp_path):
     assert "second model family" in failure["message"]
 
 
+def test_stage_journal_accepts_health_payload_with_its_own_status(tmp_path):
+    journal = StageJournal(tmp_path, seed=55)
+    health = {
+        "status": "degraded",
+        "usable": True,
+        "qualified": False,
+        "successful_models": ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b"],
+        "missing_roles": ["gameplay_director", "competition_judge", "desktop_specialist"],
+    }
+    journal.record("primary-health", health["status"], **health)
+    payload = json.loads((tmp_path / "stage-journal.json").read_text())
+    row = payload["stages"][0]
+    assert row["stage"] == "primary-health"
+    assert row["status"] == "degraded"
+    assert row["usable"] is True
+    assert row["missing_roles"] == ["gameplay_director", "competition_judge", "desktop_specialist"]
+
+
 def test_cross_browser_field_collects_only_full_pass_ids_and_divergence(tmp_path):
     paths = TournamentPaths(tmp_path)
     for race, payload in {
