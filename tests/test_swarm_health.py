@@ -7,6 +7,7 @@ from game_engine.swarm_health import (
     assess_combined_health,
     assess_primary_health,
     build_rescue_config,
+    contribution_summary,
     write_combined_health,
     write_primary_health_plan,
 )
@@ -113,6 +114,20 @@ def test_two_models_and_critical_coverage_qualify_combined_swarm():
     assert health["successful_models"] == ["kimi-model", "nemotron-model"]
 
 
+def test_circuit_open_skips_are_not_counted_as_real_failures():
+    summary = contribution_summary(
+        [
+            {"provider": "p", "role": "a", "ok": False, "failure_class": "transport", "skipped": False},
+            {"provider": "p", "role": "b", "ok": False, "failure_class": "transport", "skipped": False},
+            {"provider": "p", "role": "c", "ok": False, "failure_class": "circuit_open", "skipped": True},
+        ],
+        {"p": "model"},
+    )
+    assert summary["failure_classes"] == {"transport": 2}
+    assert summary["skipped_classes"] == {"circuit_open": 1}
+    assert summary["skipped_assignments"] == 1
+
+
 def _write_specs(path, specs):
     path.write_text(json.dumps({"providers": [asdict(row) for row in specs]}))
 
@@ -160,7 +175,8 @@ def test_live_failure_shape_writes_targeted_rescue_and_can_finalize(tmp_path):
         deterministic_seed_count=24,
     )
     assert primary_health["status"] == "degraded"
-    assert primary_health["failure_classes"] == {"content_or_schema": 2, "timeout": 4}
+    assert primary_health["failure_classes"] == {"content_or_schema": 2, "transport": 4}
+    assert primary_health["skipped_assignments"] == 0
     generated = json.loads((health_dir / "rescue.generated.json").read_text())
     generated_by_name = {row["name"]: row for row in generated["providers"]}
     assert generated_by_name["nvidia-nemotron-rescue"]["roles"] == ["gameplay_director", "competition_judge"]
