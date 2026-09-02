@@ -84,6 +84,22 @@ def split_action_trials(program: list[InputProgramStep]) -> list[list[InputProgr
     return trials
 
 
+def _pointer_setup_step(program: list[InputProgramStep]) -> InputProgramStep | None:
+    """Return pointer positioning that is setup rather than the causal intervention.
+
+    Playwright's `mouse.click` moves to the target before emitting the button event.
+    If pointer motion is itself a mechanic, scoring from a pre-move baseline falsely
+    attributes that setup motion to the click. Clicks and drags therefore position the
+    pointer before the baseline sample. Pointer-move trials deliberately do not.
+    """
+    if not program or program[-1].kind not in {"pointer_click", "pointer_drag"}:
+        return None
+    for step in program:
+        if step.command in {"pointer_click", "pointer_down"} and step.pointer_target is not None:
+            return step
+    return None
+
+
 def assess_action_trial(
     before: dict[str, Any] | None,
     after: dict[str, Any] | None,
@@ -103,9 +119,20 @@ def assess_action_trial(
     accepted_event_delta = _event_count(after_events, "action_accepted") - _event_count(before_events, "action_accepted")
     accepted = (action_delta is not None and action_delta > 0) or accepted_event_delta > 0
 
+    # Self-reported acknowledgement fields cannot certify their own causal effect.
+    # In particular action_count, last_action_ms, core_mechanic_activations and
+    # state_hash are trivial for generated code to increment on any event. They remain
+    # diagnostic output, but a required binding must alter stronger game semantics or
+    # independent pixels to count as meaningful.
     meaningful_fields = (
-        "state", "alive", "game_over", "score", "progress", "entity_count",
-        "core_mechanic_activations", "progression_transitions", "state_hash",
+        "state",
+        "alive",
+        "game_over",
+        "score",
+        "progress",
+        "entity_count",
+        "progression_transitions",
+        "restart_count",
     )
     meaningful_state_change = any(before.get(key) != after.get(key) for key in meaningful_fields)
     independent_visual_change = before_visible_hash != after_visible_hash
@@ -262,12 +289,6 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
             page.wait_for_timeout(250)
             started = time.perf_counter()
 
-            before, present, schema_version, errors = self._sample(page, started)
-            if not present or errors:
-                raise ValueError("; ".join(errors or ["missing telemetry API"]))
-            if schema_version != "0.1":
-                raise ValueError(f"unsupported telemetry schema version: {schema_version!r}")
-
             surface = page.evaluate(_POINTER_SURFACE_JS)
             if not isinstance(surface, dict):
                 raise ActionPlanError("pointer surface probe returned no object")
@@ -277,6 +298,22 @@ class ActionCausalityLab(CanvasAwareGameplayEvidenceLab):
             origin_y = max(0, int(round(float(surface.get("y") or 0))))
             if surface.get("source") != "canvas" and any(step.kind.startswith("pointer_") for step in trial_program):
                 warnings.append("no visible canvas detected; action trial used viewport pointer fallback")
+
+            setup_step = _pointer_setup_step(trial_program)
+            if setup_step is not None and setup_step.pointer_target is not None:
+                tx, ty = setup_step.pointer_target
+                setup_x = origin_x + int(round(tx * surface_width))
+                setup_y = origin_y + int(round(ty * surface_height))
+                page.mouse.move(setup_x, setup_y)
+                page.wait_for_timeout(max(60, min(160, self.sample_interval_ms)))
+
+            # Baseline is captured after non-causal pointer setup so a click cannot
+            # borrow evidence from the movement Playwright performs to reach its target.
+            before, present, schema_version, errors = self._sample(page, started)
+            if not present or errors:
+                raise ValueError("; ".join(errors or ["missing telemetry API"]))
+            if schema_version != "0.1":
+                raise ValueError(f"unsupported telemetry schema version: {schema_version!r}")
 
             after_samples = []
             action_started = time.perf_counter()
