@@ -11,6 +11,9 @@ def write_json(path, payload):
 
 
 def test_structured_repair_child_must_pass_evidence_broker_before_critics(tmp_path, monkeypatch):
+    # Compatibility test for the pre-v0.8 helper. Modern run_repair_cycle uses the
+    # staged funnel for structured actions, but this helper remains readable for old
+    # artifacts and must still fail closed if called directly.
     repair_root = tmp_path / "repairs"
     reality_root = tmp_path / "reality"
     output_dir = tmp_path / "cycle"
@@ -40,6 +43,7 @@ def test_structured_repair_child_must_pass_evidence_broker_before_critics(tmp_pa
     monkeypatch.setattr(repair_cycle, "EvidenceBroker", FakeBroker)
     result = _behavioral_child_gate(repair_root, reality_root, output_dir)
     assert result["applied"] is True
+    assert result["policy"] == "structured-actions-after-browser-legacy-path"
     assert result["qualified_build_ids"] == ["child-a"]
     assert result["repair_build_ids"] == ["child-b"]
     assert Path(result["critic_reality_root"]) == output_dir / "behavior" / "critic-reality"
@@ -58,15 +62,15 @@ def test_legacy_repair_lineage_is_explicitly_marked_as_not_behaviorally_gated(tm
 
     monkeypatch.setattr(repair_cycle, "EvidenceBroker", ForbiddenBroker)
     result = _behavioral_child_gate(repair_root, reality_root, tmp_path / "cycle")
-    assert result == {
-        "applied": False,
-        "reason": "legacy GameSpec has no structured actions",
-        "qualified_build_ids": ["legacy-child"],
-        "repair_build_ids": [],
-        "insufficient_evidence_build_ids": [],
-        "probe_errors": {},
-        "critic_reality_root": str(reality_root),
-    }
+    assert result["applied"] is False
+    assert result["policy"] == "legacy-browser-only"
+    assert "legacy GameSpec has no structured actions" in result["reason"]
+    assert "authoritative M4 not claimed" in result["reason"]
+    assert result["qualified_build_ids"] == ["legacy-child"]
+    assert result["repair_build_ids"] == []
+    assert result["insufficient_evidence_build_ids"] == []
+    assert result["probe_errors"] == {}
+    assert result["critic_reality_root"] == str(reality_root)
 
 
 def test_structured_probe_gap_never_falls_back_to_unfiltered_browser_reality(tmp_path, monkeypatch):
