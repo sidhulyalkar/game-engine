@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -43,14 +44,36 @@ def test_promotion_view_is_self_contained_and_contains_only_allowed_builds(tmp_p
     manifest = write_build_view(source, view, ["keep"])
     assert manifest["allowed_build_ids"] == ["keep"]
     assert manifest["build_count"] == 1
+    assert manifest["relocatable"] is True
     assert json.loads((view / "game-spec.json").read_text()) == {"actions": [{"id": "primary"}]}
+
+    raw_builds = json.loads((view / "builds.json").read_text())
+    assert raw_builds[0]["source_dir"] == "build-keep"
+    assert not Path(raw_builds[0]["source_dir"]).is_absolute()
 
     builds = discover_builds(view)
     assert [row["build_id"] for row in builds] == ["keep"]
     copied = Path(builds[0]["resolved_source_dir"])
     assert copied.is_relative_to(view)
     assert (copied / "index.html").read_text() == "<html><body>keep</body></html>"
-    assert not any(path.name == "drop" for path in (view / "sources").iterdir())
+    assert not (view / "build-drop").exists()
+
+
+def test_promotion_view_remains_discoverable_after_artifact_relocation(tmp_path):
+    source = Path("tests/game_corpus/restart-good")
+    original = tmp_path / "original-view"
+    write_build_view(source, original, ["restart-good"])
+
+    relocated_parent = tmp_path / "extracted-artifact"
+    relocated_parent.mkdir()
+    relocated = Path(shutil.move(str(original), str(relocated_parent / "promotion-view")))
+
+    raw = json.loads((relocated / "builds.json").read_text())
+    assert raw[0]["source_dir"] == "build-restart-good"
+    builds = discover_builds(relocated)
+    assert [row["build_id"] for row in builds] == ["restart-good"]
+    assert Path(builds[0]["resolved_source_dir"]) == relocated / "build-restart-good"
+    assert (relocated / "build-restart-good" / "index.html").exists()
 
 
 def test_promotion_view_fails_closed_on_unknown_build_id(tmp_path):
