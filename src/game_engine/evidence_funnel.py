@@ -61,11 +61,11 @@ def write_build_view(
     output_root: Path,
     allowed_build_ids: Iterable[str],
 ) -> dict:
-    """Create a self-contained evaluator view containing only promoted builds.
+    """Create a relocatable evaluator view containing only promoted builds.
 
-    Copying the tiny game source makes the evidence artifact portable after Actions
-    extraction and prevents a later evaluator from accidentally rediscovering a
-    sibling that failed an earlier gate.
+    Each copied game lives directly under the view root and `builds.json` stores only
+    that relative directory name. The view can therefore be moved out of an Actions
+    workspace and still be rediscovered by the ordinary build loader.
     """
     allowed = sorted({str(value) for value in allowed_build_ids})
     if not allowed:
@@ -79,21 +79,20 @@ def write_build_view(
     if output_root.exists():
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-    sources_root = output_root / "sources"
-    sources_root.mkdir()
 
     rows = []
     for build_id in allowed:
         source = discovered[build_id]
         src_dir = Path(source["resolved_source_dir"])
-        dest_dir = sources_root / build_id
+        relative_dir = f"build-{build_id}"
+        dest_dir = output_root / relative_dir
         shutil.copytree(src_dir, dest_dir)
         row = {
             key: value
             for key, value in source.items()
             if key != "resolved_source_dir"
         }
-        row["source_dir"] = str(dest_dir)
+        row["source_dir"] = relative_dir
         rows.append(row)
 
     spec_path = source_root / "game-spec.json"
@@ -107,6 +106,7 @@ def write_build_view(
         "allowed_build_ids": allowed,
         "build_count": len(rows),
         "self_contained_sources": True,
+        "relocatable": True,
     }
     (output_root / "promotion-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
