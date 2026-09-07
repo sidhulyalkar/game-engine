@@ -163,7 +163,8 @@ def test_only_behaviorally_qualified_builds_enter_full_browser_field(tmp_path):
         source, tmp_path / "funnel", ("chromium", "firefox", "webkit")
     )
     assert result["status"] == "qualified"
-    assert result["semantic_qualified_build_ids"] == ["drop", "keep"]
+    # Preserve the original build-field evidence order; filtering must not rewrite provenance.
+    assert result["semantic_qualified_build_ids"] == ["keep", "drop"]
     assert installs == [("chromium",), ("firefox", "webkit")]
     assert [call[0] for call in FakeReality.calls] == [
         ("chromium",), ("chromium", "firefox", "webkit")
