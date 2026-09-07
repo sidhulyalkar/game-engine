@@ -63,6 +63,23 @@ def make_funnel(installs):
     )
 
 
+def test_exact_run64_semantic_failure_spends_zero_browser_budget(tmp_path):
+    reset_fakes()
+    installs = []
+    result = make_funnel(installs).run(
+        Path("tests/game_corpus/run64-tension-trail"),
+        tmp_path / "funnel",
+        ("chromium", "firefox", "webkit"),
+    )
+    assert result["status"] == "semantic_falsification_failed"
+    assert result["semantic_qualified_build_ids"] == []
+    assert result["semantic_blocked_build_ids"] == ["b97d9a0640"]
+    assert installs == []
+    assert FakeReality.calls == []
+    assert FakeBroker.calls == []
+    assert result["promotion_attempted"] is False
+
+
 def test_behavioral_failure_never_installs_firefox_or_webkit(tmp_path):
     reset_fakes()
     installs = []
@@ -79,6 +96,7 @@ def test_behavioral_failure_never_installs_firefox_or_webkit(tmp_path):
         ("chromium", "firefox", "webkit"),
     )
     assert result["status"] == "behavioral_repair_required"
+    assert result["semantic_qualified_build_ids"] == ["restart-good"]
     assert installs == [("chromium",)]
     assert len(FakeReality.calls) == 1
     assert result["promotion_attempted"] is False
@@ -145,6 +163,7 @@ def test_only_behaviorally_qualified_builds_enter_full_browser_field(tmp_path):
         source, tmp_path / "funnel", ("chromium", "firefox", "webkit")
     )
     assert result["status"] == "qualified"
+    assert result["semantic_qualified_build_ids"] == ["drop", "keep"]
     assert installs == [("chromium",), ("firefox", "webkit")]
     assert [call[0] for call in FakeReality.calls] == [
         ("chromium",), ("chromium", "firefox", "webkit")
@@ -181,3 +200,26 @@ def test_cross_browser_failure_is_distinct_from_behavior_failure(tmp_path):
     assert installs == [("chromium",), ("firefox", "webkit")]
     assert result["behaviorally_qualified_build_ids"] == ["restart-good"]
     assert result["cross_browser_build_ids"] == []
+
+
+def test_single_browser_qualification_reuses_reference_reality(tmp_path):
+    reset_fakes()
+    installs = []
+    FakeReality.responses = [{"full_pass_build_ids": ["restart-good"]}]
+    FakeBroker.response = {
+        "behaviorally_qualified_build_ids": ["restart-good"],
+        "behavioral_repair_build_ids": [],
+        "insufficient_evidence_build_ids": [],
+        "probe_errors": {},
+    }
+    result = make_funnel(installs).run(
+        Path("tests/game_corpus/restart-good"),
+        tmp_path / "funnel",
+        ("chromium",),
+    )
+    assert result["status"] == "qualified"
+    assert installs == [("chromium",)]
+    assert len(FakeReality.calls) == 1
+    assert result["promotion_attempted"] is False
+    assert result["cross_browser_build_ids"] == ["restart-good"]
+    assert result["final_reality_root"].endswith("reference-reality")
