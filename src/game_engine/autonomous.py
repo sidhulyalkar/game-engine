@@ -11,10 +11,9 @@ from typing import Any
 
 from .behavior_repair import BehavioralRepairForge
 from .config import build_clients, load_provider_specs
-from .evidence_broker import EvidenceBroker
+from .evidence_funnel import StagedEvidenceFunnel
 from .orchestrator import Studio
 from .prototype import PrototypeForge
-from .reality import BrowserRealityLab
 from .repair_cycle import run_repair_cycle
 from .schema import Brief, Concept
 from .selection import write_joint_selection
@@ -111,6 +110,7 @@ def _good_builds(paths: TournamentPaths) -> tuple[list[tuple[str, dict[str, Any]
     return good, failures
 
 
+# Legacy artifact reader retained so old tournament artifacts/tests remain inspectable.
 def _cross_browser_field(paths: TournamentPaths) -> tuple[list[tuple[str, str]], dict[str, Any], list[str]]:
     full_pass: list[tuple[str, str]] = []
     matrices: dict[str, Any] = {}
@@ -128,6 +128,7 @@ def _cross_browser_field(paths: TournamentPaths) -> tuple[list[tuple[str, str]],
     return full_pass, matrices, sorted(set(semantic_divergence))
 
 
+# Legacy M4 artifact reader retained for backwards-compatible evidence inspection.
 def _behavioral_field(
     paths: TournamentPaths,
 ) -> tuple[list[tuple[str, str]], list[str], list[str], dict[str, Any], dict[str, Any]]:
@@ -173,7 +174,101 @@ def _full_pass_ids(reality_root: Path) -> list[str]:
     return [str(value) for value in json.loads(path.read_text()).get("full_pass_build_ids", [])]
 
 
+def _staged_payload(paths: TournamentPaths, race: str, repaired: bool = False) -> dict[str, Any]:
+    name = f"staged-repair-{race}" if repaired else f"staged-{race}"
+    path = paths.child(name) / "staged-evidence.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def _staged_field(paths: TournamentPaths, repaired: bool = False) -> dict[str, Any]:
+    semantic_qualified: list[tuple[str, str]] = []
+    semantic_blocked: list[str] = []
+    reference: list[tuple[str, str]] = []
+    behaviorally_qualified: list[tuple[str, str]] = []
+    behavioral_repair: list[str] = []
+    insufficient: list[str] = []
+    cross_browser: list[tuple[str, str]] = []
+    probe_errors: dict[str, Any] = {}
+    matrices: dict[str, Any] = {}
+    divergence: list[str] = []
+    statuses: dict[str, str] = {}
+    payloads: dict[str, dict[str, Any]] = {}
+
+    root_prefix = "staged-repair" if repaired else "staged"
+    for race in ("a", "b"):
+        payload = _staged_payload(paths, race, repaired=repaired)
+        if not payload:
+            continue
+        payloads[race] = payload
+        statuses[race] = str(payload.get("status", "unknown"))
+        semantic_qualified.extend(
+            (race, str(build_id))
+            for build_id in payload.get("semantic_qualified_build_ids", [])
+        )
+        semantic_blocked.extend(
+            f"{race}:{build_id}" for build_id in payload.get("semantic_blocked_build_ids", [])
+        )
+        reference.extend(
+            (race, str(build_id))
+            for build_id in payload.get("reference_browser_build_ids", [])
+        )
+        behaviorally_qualified.extend(
+            (race, str(build_id))
+            for build_id in payload.get("behaviorally_qualified_build_ids", [])
+        )
+        behavioral_repair.extend(
+            f"{race}:{build_id}" for build_id in payload.get("behavioral_repair_build_ids", [])
+        )
+        insufficient.extend(
+            f"{race}:{build_id}" for build_id in payload.get("insufficient_evidence_build_ids", [])
+        )
+        cross_browser.extend(
+            (race, str(build_id))
+            for build_id in payload.get("cross_browser_build_ids", [])
+        )
+        errors = payload.get("behavioral_probe_errors") or {}
+        if errors:
+            probe_errors[race] = errors
+
+        stage_root = paths.child(f"{root_prefix}-{race}")
+        final_q = stage_root / "final-reality" / "qualification.json"
+        reference_q = stage_root / "reference-reality" / "qualification.json"
+        q_path = final_q if final_q.exists() else reference_q
+        if q_path.exists():
+            q = json.loads(q_path.read_text())
+            matrices[race] = q.get("matrix", {})
+            divergence.extend(
+                f"{race}:{build_id}"
+                for build_id in q.get("semantic_divergence_build_ids", [])
+            )
+
+    return {
+        "semantic_qualified": semantic_qualified,
+        "semantic_blocked": sorted(set(semantic_blocked)),
+        "reference": reference,
+        "behaviorally_qualified": behaviorally_qualified,
+        "behavioral_repair": sorted(set(behavioral_repair)),
+        "insufficient": sorted(set(insufficient)),
+        "cross_browser": cross_browser,
+        "probe_errors": probe_errors,
+        "matrices": matrices,
+        "semantic_divergence": sorted(set(divergence)),
+        "statuses": statuses,
+        "payloads": payloads,
+    }
+
+
 def _critic_lineage(paths: TournamentPaths, race: str) -> tuple[Path, Path, str]:
+    # Current staged lineage always wins over legacy artifacts when present.
+    original_staged = paths.child(f"staged-{race}") / "critic-reality"
+    if _full_pass_ids(original_staged):
+        return paths.child(f"builds-{race}"), original_staged, "original"
+
+    repaired_staged = paths.child(f"staged-repair-{race}") / "critic-reality"
+    if _full_pass_ids(repaired_staged):
+        return paths.child(f"behavior-repairs-{race}"), repaired_staged, "behavioral-repair"
+
+    # Backwards-compatible v0.6/v0.7 artifact lineage.
     original_reality = paths.child(f"behavior-{race}") / "critic-reality"
     if _full_pass_ids(original_reality):
         return paths.child(f"builds-{race}"), original_reality, "original"
@@ -182,6 +277,8 @@ def _critic_lineage(paths: TournamentPaths, race: str) -> tuple[Path, Path, str]
     if _full_pass_ids(repaired_reality):
         return paths.child(f"behavior-repairs-{race}"), repaired_reality, "behavioral-repair"
 
+    if (original_staged / "qualification.json").exists():
+        return paths.child(f"builds-{race}"), original_staged, "blocked-original"
     if (original_reality / "qualification.json").exists():
         return paths.child(f"builds-{race}"), original_reality, "blocked-original"
     return paths.child(f"builds-{race}"), paths.child(f"reality-{race}"), "legacy"
@@ -385,72 +482,115 @@ def run_autonomous_tournament(
             builds=[{"race": race, "provider": row.get("provider"), "bytes": row.get("compressed_bytes")} for race, row in good],
         )
 
-        if install_browsers_on_demand:
-            journal.record("browser-engine-install", "started", browsers=list(browsers))
-            _install_browser_engines(browsers)
-            journal.record("browser-engine-install", "passed", browsers=list(browsers))
-        else:
-            journal.record("browser-engine-install", "skipped", reason="caller-managed browser binaries")
+        installed_browsers: set[str] = set()
 
+        def install_once(requested: tuple[str, ...]) -> None:
+            missing = tuple(browser for browser in requested if browser not in installed_browsers)
+            if not missing:
+                journal.record(
+                    "browser-engine-install",
+                    "skipped",
+                    reason="requested engines already installed by an earlier qualified lineage",
+                    requested=list(requested),
+                    installed=sorted(installed_browsers),
+                )
+                return
+            journal.record("browser-engine-install", "started", browsers=list(missing))
+            _install_browser_engines(missing)
+            installed_browsers.update(missing)
+            journal.record(
+                "browser-engine-install",
+                "passed",
+                browsers=list(missing),
+                installed=sorted(installed_browsers),
+            )
+
+        if not install_browsers_on_demand:
+            journal.record(
+                "browser-engine-install-policy",
+                "skipped",
+                reason="caller-managed browser binaries",
+            )
+
+        # Every original implementation now buys evidence in ascending cost order:
+        # static semantics -> one reference browser -> M4 -> remaining browsers.
         for race in ("a", "b"):
             if not any(item_race == race for item_race, _ in good):
-                journal.record(f"browser-reality-{race}", "skipped", reason="no byte-qualified build in race")
+                journal.record(f"staged-evidence-{race}", "skipped", reason="no byte-qualified build in race")
                 continue
             try:
-                reality = BrowserRealityLab(browsers=browsers, timeout_ms=12_000).run(
-                    paths.child(f"builds-{race}"),
-                    paths.child(f"reality-{race}"),
-                )
-                journal.record(
-                    f"browser-reality-{race}",
-                    "completed",
-                    full_pass_build_ids=reality.get("full_pass_build_ids", []),
-                    semantic_divergence_build_ids=reality.get("semantic_divergence_build_ids", []),
-                )
-            except Exception as exc:
-                journal.record(f"browser-reality-{race}", "error", error=f"{type(exc).__name__}: {exc}")
-
-        full_pass, matrices, semantic_divergence = _cross_browser_field(paths)
-        if not full_pass:
-            raise TournamentFailure("cross-browser-field", f"no implementation passed all browsers: {matrices}")
-        journal.record("cross-browser-field", "passed", survivors=[f"{race}:{build}" for race, build in full_pass])
-
-        for race in ("a", "b"):
-            reality_path = paths.child(f"reality-{race}") / "qualification.json"
-            if not reality_path.exists() or not json.loads(reality_path.read_text()).get("full_pass_build_ids"):
-                journal.record(f"behavioral-evidence-{race}", "skipped", reason="no cross-browser survivor in race")
-                continue
-            try:
-                behavioral = EvidenceBroker(
-                    browsers=("chromium",),
+                staged = StagedEvidenceFunnel(
+                    install_browsers=install_browsers_on_demand,
+                    installer=install_once if install_browsers_on_demand else None,
+                    timeout_ms=12_000,
                     sample_interval_ms=160,
                 ).run(
                     paths.child(f"builds-{race}"),
-                    paths.child(f"behavior-{race}"),
-                    paths.child(f"reality-{race}"),
+                    paths.child(f"staged-{race}"),
+                    browsers,
                 )
                 journal.record(
-                    f"behavioral-evidence-{race}",
+                    f"staged-evidence-{race}",
                     "completed",
-                    behaviorally_qualified_build_ids=behavioral.get("behaviorally_qualified_build_ids", []),
-                    behavioral_repair_build_ids=behavioral.get("behavioral_repair_build_ids", []),
-                    insufficient_evidence_build_ids=behavioral.get("insufficient_evidence_build_ids", []),
-                    probe_errors=behavioral.get("probe_errors", {}),
+                    result_status=staged.get("status"),
+                    semantic_qualified_build_ids=staged.get("semantic_qualified_build_ids", []),
+                    semantic_blocked_build_ids=staged.get("semantic_blocked_build_ids", []),
+                    reference_browser_build_ids=staged.get("reference_browser_build_ids", []),
+                    behaviorally_qualified_build_ids=staged.get("behaviorally_qualified_build_ids", []),
+                    behavioral_repair_build_ids=staged.get("behavioral_repair_build_ids", []),
+                    insufficient_evidence_build_ids=staged.get("insufficient_evidence_build_ids", []),
+                    cross_browser_build_ids=staged.get("cross_browser_build_ids", []),
+                    probe_errors=staged.get("behavioral_probe_errors", {}),
                 )
             except Exception as exc:
-                journal.record(f"behavioral-evidence-{race}", "error", error=f"{type(exc).__name__}: {exc}")
+                journal.record(f"staged-evidence-{race}", "error", error=f"{type(exc).__name__}: {exc}")
 
-        (
-            behaviorally_qualified,
-            behavioral_repair,
-            behavioral_insufficient,
-            behavioral_matrix,
-            behavioral_probe_errors,
-        ) = _behavioral_field(paths)
+        original_field = _staged_field(paths)
+        semantic_qualified = original_field["semantic_qualified"]
+        semantic_blocked = original_field["semantic_blocked"]
+        reference_qualified = original_field["reference"]
+        behaviorally_qualified = original_field["behaviorally_qualified"]
+        behavioral_repair = original_field["behavioral_repair"]
+        behavioral_insufficient = original_field["insufficient"]
+        behavioral_probe_errors = original_field["probe_errors"]
+
+        if not semantic_qualified:
+            raise TournamentFailure(
+                "semantic-falsification-field",
+                "no byte-qualified implementation survived deterministic source semantics: "
+                + json.dumps({
+                    "blocked_build_ids": semantic_blocked,
+                    "statuses": original_field["statuses"],
+                }),
+            )
+        journal.record(
+            "semantic-falsification-field",
+            "passed",
+            survivors=[f"{race}:{build}" for race, build in semantic_qualified],
+            blocked_build_ids=semantic_blocked,
+        )
+
+        if not reference_qualified:
+            raise TournamentFailure(
+                "reference-browser-field",
+                "no semantically qualified implementation survived the reference browser: "
+                + json.dumps({
+                    "statuses": original_field["statuses"],
+                    "browser_matrices": original_field["matrices"],
+                }),
+            )
+        journal.record(
+            "reference-browser-field",
+            "passed",
+            survivors=[f"{race}:{build}" for race, build in reference_qualified],
+        )
 
         behavioral_repair_attempted = False
         behavioral_repair_summaries: dict[str, Any] = {}
-        if not behaviorally_qualified and behavioral_repair:
+        # A failed M4 candidate may get one bounded causal repair lineage. A candidate
+        # that passed M4 but failed Firefox/WebKit is not mislabeled as a gameplay
+        # repair problem; it remains a compatibility failure.
+        if not original_field["cross_browser"] and behavioral_repair:
             behavioral_repair_attempted = True
             behavior_repair_specs = load_provider_specs(repair_providers)
             behavior_repair_clients = build_clients(behavior_repair_specs)
@@ -464,6 +604,7 @@ def run_autonomous_tournament(
                     journal.record(f"behavioral-repair-{race}", "skipped", reason="no causal repair candidate in race")
                     continue
                 try:
+                    parent_behavior_root = paths.child(f"staged-{race}") / "behavior"
                     repairs = BehavioralRepairForge(
                         behavior_repair_clients,
                         max_workers=min(2, max(1, len(behavior_repair_clients))),
@@ -471,7 +612,7 @@ def run_autonomous_tournament(
                         brief,
                         concept,
                         paths.child(f"builds-{race}"),
-                        paths.child(f"behavior-{race}"),
+                        parent_behavior_root,
                         paths.child(f"behavior-repairs-{race}"),
                         max_parents=1,
                     )
@@ -491,36 +632,26 @@ def run_autonomous_tournament(
                         }
                         continue
 
-                    child_reality = BrowserRealityLab(browsers=browsers, timeout_ms=12_000).run(
-                        paths.child(f"behavior-repairs-{race}"),
-                        paths.child(f"behavior-repair-reality-{race}"),
-                    )
-                    journal.record(
-                        f"behavioral-repair-reality-{race}",
-                        "completed",
-                        full_pass_build_ids=child_reality.get("full_pass_build_ids", []),
-                    )
-                    if not child_reality.get("full_pass_build_ids"):
-                        behavioral_repair_summaries[race] = {
-                            "status": "children_failed_browser",
-                            "successful_children": [row.build_id for row in successful],
-                        }
-                        continue
-
-                    child_behavior = EvidenceBroker(
-                        browsers=("chromium",),
+                    child_staged = StagedEvidenceFunnel(
+                        install_browsers=install_browsers_on_demand,
+                        installer=install_once if install_browsers_on_demand else None,
+                        timeout_ms=12_000,
                         sample_interval_ms=160,
                     ).run(
                         paths.child(f"behavior-repairs-{race}"),
-                        paths.child(f"behavior-repair-evidence-{race}"),
-                        paths.child(f"behavior-repair-reality-{race}"),
+                        paths.child(f"staged-repair-{race}"),
+                        browsers,
                     )
                     behavioral_repair_summaries[race] = {
-                        "status": "qualified" if child_behavior.get("behaviorally_qualified_build_ids") else "behavioral_failure",
-                        "behaviorally_qualified_build_ids": child_behavior.get("behaviorally_qualified_build_ids", []),
-                        "behavioral_repair_build_ids": child_behavior.get("behavioral_repair_build_ids", []),
-                        "insufficient_evidence_build_ids": child_behavior.get("insufficient_evidence_build_ids", []),
-                        "probe_errors": child_behavior.get("probe_errors", {}),
+                        "status": child_staged.get("status"),
+                        "semantic_qualified_build_ids": child_staged.get("semantic_qualified_build_ids", []),
+                        "semantic_blocked_build_ids": child_staged.get("semantic_blocked_build_ids", []),
+                        "reference_browser_build_ids": child_staged.get("reference_browser_build_ids", []),
+                        "behaviorally_qualified_build_ids": child_staged.get("behaviorally_qualified_build_ids", []),
+                        "behavioral_repair_build_ids": child_staged.get("behavioral_repair_build_ids", []),
+                        "insufficient_evidence_build_ids": child_staged.get("insufficient_evidence_build_ids", []),
+                        "cross_browser_build_ids": child_staged.get("cross_browser_build_ids", []),
+                        "probe_errors": child_staged.get("behavioral_probe_errors", {}),
                     }
                     journal.record(
                         f"behavioral-repair-evidence-{race}",
@@ -537,25 +668,41 @@ def run_autonomous_tournament(
                         "error",
                         error=f"{type(exc).__name__}: {exc}",
                     )
-        elif behaviorally_qualified:
+        elif original_field["cross_browser"]:
             journal.record(
                 "behavioral-repair",
                 "skipped",
-                reason="at least one original build already satisfies causal gameplay gates",
+                reason="at least one original lineage already satisfies semantic, causal, and cross-browser gates",
             )
         else:
             journal.record(
                 "behavioral-repair",
                 "skipped",
-                reason="no coherent behavioral repair candidate; evidence is missing or infrastructure failed",
+                reason="no coherent causal repair candidate; evidence is missing or failure is compatibility-only",
             )
 
+        repaired_field = _staged_field(paths, repaired=True)
         critic_ready, critic_lineages = _critic_ready_field(paths)
         if not critic_ready:
+            all_m4 = behaviorally_qualified + repaired_field["behaviorally_qualified"]
+            if all_m4:
+                raise TournamentFailure(
+                    "cross-browser-field",
+                    "causally qualified implementations failed final browser compatibility: "
+                    + json.dumps({
+                        "behaviorally_qualified_build_ids": [f"{race}:{build}" for race, build in all_m4],
+                        "original_statuses": original_field["statuses"],
+                        "repair_statuses": repaired_field["statuses"],
+                        "browser_matrices": {
+                            "original": original_field["matrices"],
+                            "repair": repaired_field["matrices"],
+                        },
+                    }),
+                )
             if behavioral_repair_attempted:
                 raise TournamentFailure(
                     "behavioral-repair-evidence",
-                    "bounded causal repair produced no behaviorally qualified child: "
+                    "bounded causal repair produced no fully qualified child: "
                     + json.dumps({
                         "original_repair_build_ids": behavioral_repair,
                         "original_insufficient_evidence_build_ids": behavioral_insufficient,
@@ -564,16 +711,17 @@ def run_autonomous_tournament(
                 )
             raise TournamentFailure(
                 "behavioral-evidence",
-                "no cross-browser implementation produced complete causal gameplay evidence: "
+                "no reference-browser implementation produced complete causal gameplay evidence: "
                 + json.dumps({
                     "repair_build_ids": behavioral_repair,
                     "insufficient_evidence_build_ids": behavioral_insufficient,
                     "probe_errors": behavioral_probe_errors,
-                    "matrix": behavioral_matrix,
+                    "statuses": original_field["statuses"],
                 }),
             )
+
         journal.record(
-            "behavioral-evidence",
+            "staged-evidence-field",
             "passed",
             critic_eligible_build_ids=[f"{race}:{build}" for race, build in critic_ready],
             lineages=critic_lineages,
@@ -584,10 +732,18 @@ def run_autonomous_tournament(
             insufficient_evidence_build_ids=behavioral_insufficient,
             probe_errors=behavioral_probe_errors,
             behavioral_repair_attempted=behavioral_repair_attempted,
+            installed_browsers=sorted(installed_browsers),
         )
 
         selection_payload = json.loads((paths.child("champion") / "selection.json").read_text())
         good_rows = [row for _, row in good]
+        combined_matrices = {
+            **{f"original-{race}": matrix for race, matrix in original_field["matrices"].items()},
+            **{f"repair-{race}": matrix for race, matrix in repaired_field["matrices"].items()},
+        }
+        semantic_divergence = sorted(set(
+            original_field["semantic_divergence"] + repaired_field["semantic_divergence"]
+        ))
         run_summary: dict[str, Any] = {
             "concept": concept.title,
             "concept_id": concept.concept_id,
@@ -598,27 +754,42 @@ def run_autonomous_tournament(
             "final_swarm_health": final_health,
             "rescue_used": rescue_used,
             "prototype_survivors": len(good),
-            "cross_browser_survivors": len(full_pass),
-            "cross_browser_build_ids": [f"{race}:{build}" for race, build in full_pass],
-            "browser_matrices": matrices,
+            "semantic_falsification_survivors": len(semantic_qualified),
+            "semantic_falsification_build_ids": [f"{race}:{build}" for race, build in semantic_qualified],
+            "semantic_falsification_blocked_build_ids": semantic_blocked,
+            "reference_browser_survivors": len(reference_qualified),
+            "reference_browser_build_ids": [f"{race}:{build}" for race, build in reference_qualified],
+            "cross_browser_survivors": len(critic_ready),
+            "cross_browser_build_ids": [f"{race}:{build}" for race, build in critic_ready],
+            "browser_matrices": combined_matrices,
             "semantic_divergence_build_ids": semantic_divergence,
             "smallest_survivor_bytes": min(row["compressed_bytes"] for row in good_rows),
             "largest_headroom_bytes": max(row["byte_headroom"] for row in good_rows),
             "browser_reality_lab_passed": True,
             "behavioral_evidence_lab_passed": True,
-            "behavioral_reference_browser": "chromium",
+            "staged_evidence_funnel_passed": True,
+            "behavioral_reference_browser": next(
+                (
+                    str(payload.get("reference_browser"))
+                    for payload in original_field["payloads"].values()
+                    if payload.get("reference_browser")
+                ),
+                "chromium",
+            ),
             "original_behaviorally_qualified_build_ids": [
                 f"{race}:{build}" for race, build in behaviorally_qualified
             ],
             "behavioral_repair_build_ids": behavioral_repair,
             "behavioral_insufficient_evidence_build_ids": behavioral_insufficient,
             "behavioral_probe_errors": behavioral_probe_errors,
-            "behavioral_matrix": behavioral_matrix,
             "behavioral_repair_attempted": behavioral_repair_attempted,
             "behavioral_repair_evidence": behavioral_repair_summaries,
+            "original_staged_evidence": original_field["payloads"],
+            "repair_staged_evidence": repaired_field["payloads"],
             "critic_eligible_build_ids": [f"{race}:{build}" for race, build in critic_ready],
             "critic_eligible_lineages": critic_lineages,
             "competitive_field": len(critic_ready) >= 2,
+            "browser_installations": sorted(installed_browsers),
             "promotion_blocked_until_gameplay_audit": True,
         }
         (output_root / "run-summary.json").write_text(json.dumps(run_summary, indent=2) + "\n")
@@ -629,7 +800,7 @@ def run_autonomous_tournament(
             audit_builds, critic_reality, lineage = _critic_lineage(paths, race)
             qualification_path = critic_reality / "qualification.json"
             if not qualification_path.exists() or not json.loads(qualification_path.read_text()).get("full_pass_build_ids"):
-                journal.record(f"source-audit-{race}", "skipped", reason="no behaviorally qualified lineage in race")
+                journal.record(f"source-audit-{race}", "skipped", reason="no staged-evidence-qualified lineage in race")
                 continue
             try:
                 audit = SourceGameplayLab(audit_clients, max_workers=4).run(
@@ -652,7 +823,7 @@ def run_autonomous_tournament(
 
         qualified_audits, audit_matrix = _audit_field(paths)
         if not qualified_audits:
-            raise TournamentFailure("gameplay-audit-evidence", f"no behaviorally qualified build received two independent audits: {audit_matrix}")
+            raise TournamentFailure("gameplay-audit-evidence", f"no staged-evidence-qualified build received two independent audits: {audit_matrix}")
         journal.record("gameplay-audit-evidence", "passed", qualified=len(qualified_audits))
         run_summary["gameplay_audit_evidence"] = True
         run_summary["gameplay_audit_matrix"] = audit_matrix
