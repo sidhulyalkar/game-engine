@@ -1,0 +1,13 @@
+[
+  {
+    "provider": "nvidia-nemotron-builder",
+    "build_id": "b97d9a0640",
+    "ok": true,
+    "source_dir": "tests/game_corpus/run64-tension-trail/game",
+    "zip_path": "fixture.zip",
+    "compressed_bytes": 2372,
+    "byte_headroom": 10940,
+    "warnings": [],
+    "error": null
+  }
+]
