@@ -17,6 +17,7 @@ on:
     branches:
       - main
       - agent/v0.1-swarm-foundry
+      - agent/v0.8-nvidia-qualification
     paths:
       - '.github/workflows/autonomous-studio.yml'
       - 'studio.nvidia*.json'
