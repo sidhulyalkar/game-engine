@@ -8,6 +8,7 @@ from typing import Callable, Iterable
 
 from .evidence_broker import EvidenceBroker, write_critic_reality_view
 from .reality import BrowserRealityLab, discover_builds
+from .source_falsification import SourceFalsificationLab
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,9 @@ class StagedEvidenceResult:
     status: str
     reference_browser: str
     promotion_browsers: list[str]
+    semantic_qualified_build_ids: list[str]
+    semantic_blocked_build_ids: list[str]
+    semantic_view_root: str | None
     reference_browser_build_ids: list[str]
     behaviorally_qualified_build_ids: list[str]
     behavioral_repair_build_ids: list[str]
@@ -109,13 +113,17 @@ def write_build_view(
 
 
 class StagedEvidenceFunnel:
-    """Buy expensive compatibility evidence only after cheap gameplay evidence survives.
+    """Spend evidence in ascending order of cost and subjectivity.
 
     This coordinator is deliberately lineage-local: callers can run it on original
     builder output or on a repair field. It does not choose concepts or repair games.
-    It only proves one implementation lineage through:
+    It proves one implementation lineage through:
 
-      reference browser -> M4 behavior -> promoted build view -> full browser field.
+      source semantics -> reference browser -> M4 behavior -> promoted build view
+      -> full browser field -> critic-ready reality.
+
+    A deterministic source blocker therefore pays zero browser-install cost, while a
+    behavioral failure pays only the reference-engine cost.
     """
 
     def __init__(
@@ -123,6 +131,7 @@ class StagedEvidenceFunnel:
         *,
         install_browsers: bool = False,
         installer: Callable[[tuple[str, ...]], None] | None = None,
+        source_falsification_factory=SourceFalsificationLab,
         reality_factory=BrowserRealityLab,
         broker_factory=EvidenceBroker,
         timeout_ms: int = 12_000,
@@ -130,6 +139,7 @@ class StagedEvidenceFunnel:
     ):
         self.install_browsers = install_browsers
         self.installer = installer
+        self.source_falsification_factory = source_falsification_factory
         self.reality_factory = reality_factory
         self.broker_factory = broker_factory
         self.timeout_ms = timeout_ms
@@ -151,18 +161,56 @@ class StagedEvidenceFunnel:
         plan = plan_browser_stages(browsers)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        semantic_root = output_dir / "semantic-falsification"
+        semantic = self.source_falsification_factory().run(
+            builds_root,
+            semantic_root,
+        )
+        semantic_qualified = [
+            str(value) for value in semantic.get("full_pass_build_ids", [])
+        ]
+        semantic_blocked = [
+            str(value) for value in semantic.get("blocked_build_ids", [])
+        ]
+        if not semantic_qualified:
+            result = StagedEvidenceResult(
+                status="semantic_falsification_failed",
+                reference_browser=plan.reference_browser,
+                promotion_browsers=list(plan.promotion_browsers),
+                semantic_qualified_build_ids=[],
+                semantic_blocked_build_ids=semantic_blocked,
+                semantic_view_root=None,
+                reference_browser_build_ids=[],
+                behaviorally_qualified_build_ids=[],
+                behavioral_repair_build_ids=[],
+                insufficient_evidence_build_ids=[],
+                behavioral_probe_errors={},
+                promotion_attempted=False,
+                cross_browser_build_ids=[],
+                promotion_view_root=None,
+                final_reality_root=None,
+                critic_reality_root=None,
+            )
+            return self._write_result(output_dir, result)
+
+        semantic_view = output_dir / "semantic-view"
+        write_build_view(builds_root, semantic_view, semantic_qualified)
+
         self._install((plan.reference_browser,))
         reference_root = output_dir / "reference-reality"
         reference = self.reality_factory(
             browsers=(plan.reference_browser,),
             timeout_ms=self.timeout_ms,
-        ).run(builds_root, reference_root)
+        ).run(semantic_view, reference_root)
         reference_ids = [str(value) for value in reference.get("full_pass_build_ids", [])]
         if not reference_ids:
             result = StagedEvidenceResult(
                 status="reference_browser_failed",
                 reference_browser=plan.reference_browser,
                 promotion_browsers=list(plan.promotion_browsers),
+                semantic_qualified_build_ids=semantic_qualified,
+                semantic_blocked_build_ids=semantic_blocked,
+                semantic_view_root=str(semantic_view),
                 reference_browser_build_ids=[],
                 behaviorally_qualified_build_ids=[],
                 behavioral_repair_build_ids=[],
@@ -180,7 +228,7 @@ class StagedEvidenceFunnel:
         behavior = self.broker_factory(
             browsers=(plan.reference_browser,),
             sample_interval_ms=self.sample_interval_ms,
-        ).run(builds_root, behavior_root, reference_root)
+        ).run(semantic_view, behavior_root, reference_root)
         qualified = [str(value) for value in behavior.get("behaviorally_qualified_build_ids", [])]
         repair = [str(value) for value in behavior.get("behavioral_repair_build_ids", [])]
         insufficient = [str(value) for value in behavior.get("insufficient_evidence_build_ids", [])]
@@ -199,6 +247,9 @@ class StagedEvidenceFunnel:
                 status=status,
                 reference_browser=plan.reference_browser,
                 promotion_browsers=list(plan.promotion_browsers),
+                semantic_qualified_build_ids=semantic_qualified,
+                semantic_blocked_build_ids=semantic_blocked,
+                semantic_view_root=str(semantic_view),
                 reference_browser_build_ids=reference_ids,
                 behaviorally_qualified_build_ids=[],
                 behavioral_repair_build_ids=repair,
@@ -212,8 +263,34 @@ class StagedEvidenceFunnel:
             )
             return self._write_result(output_dir, result)
 
+        # A one-browser tournament needs no compatibility promotion. Reuse the
+        # reference evidence rather than paying for the same browser twice.
+        if not plan.promotion_browsers:
+            final_ids = sorted(set(reference_ids) & set(qualified))
+            critic_root = output_dir / "critic-reality"
+            write_critic_reality_view(reference_root, critic_root, final_ids)
+            result = StagedEvidenceResult(
+                status="qualified",
+                reference_browser=plan.reference_browser,
+                promotion_browsers=[],
+                semantic_qualified_build_ids=semantic_qualified,
+                semantic_blocked_build_ids=semantic_blocked,
+                semantic_view_root=str(semantic_view),
+                reference_browser_build_ids=reference_ids,
+                behaviorally_qualified_build_ids=qualified,
+                behavioral_repair_build_ids=repair,
+                insufficient_evidence_build_ids=insufficient,
+                behavioral_probe_errors=probe_errors,
+                promotion_attempted=False,
+                cross_browser_build_ids=final_ids,
+                promotion_view_root=None,
+                final_reality_root=str(reference_root),
+                critic_reality_root=str(critic_root),
+            )
+            return self._write_result(output_dir, result)
+
         promotion_view = output_dir / "promotion-view"
-        write_build_view(builds_root, promotion_view, qualified)
+        write_build_view(semantic_view, promotion_view, qualified)
 
         # Firefox/WebKit or other compatibility engines are installed only here,
         # after the candidate has proved causal controls/restart/agency in the
@@ -230,6 +307,9 @@ class StagedEvidenceFunnel:
                 status="cross_browser_failed",
                 reference_browser=plan.reference_browser,
                 promotion_browsers=list(plan.promotion_browsers),
+                semantic_qualified_build_ids=semantic_qualified,
+                semantic_blocked_build_ids=semantic_blocked,
+                semantic_view_root=str(semantic_view),
                 reference_browser_build_ids=reference_ids,
                 behaviorally_qualified_build_ids=qualified,
                 behavioral_repair_build_ids=repair,
@@ -252,6 +332,9 @@ class StagedEvidenceFunnel:
             status="qualified",
             reference_browser=plan.reference_browser,
             promotion_browsers=list(plan.promotion_browsers),
+            semantic_qualified_build_ids=semantic_qualified,
+            semantic_blocked_build_ids=semantic_blocked,
+            semantic_view_root=str(semantic_view),
             reference_browser_build_ids=reference_ids,
             behaviorally_qualified_build_ids=qualified,
             behavioral_repair_build_ids=repair,
