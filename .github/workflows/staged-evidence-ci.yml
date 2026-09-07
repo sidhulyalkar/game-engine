@@ -1,0 +1,105 @@
+name: Staged Evidence CI
+
+on:
+  push:
+    branches:
+      - 'agent/v0.8-staged-evidence-funnel'
+    paths:
+      - '.github/workflows/staged-evidence-ci.yml'
+      - 'src/game_engine/evidence_funnel.py'
+      - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/action_causality.py'
+      - 'src/game_engine/action_policy.py'
+      - 'src/game_engine/playtest.py'
+      - 'src/game_engine/structured_playtest.py'
+      - 'src/game_engine/visual_playtest.py'
+      - 'src/game_engine/restart_playtest.py'
+      - 'src/game_engine/reality.py'
+      - 'tests/test_evidence_funnel.py'
+      - 'tests/test_staged_evidence_funnel.py'
+      - 'tests/game_corpus/restart-good/**'
+      - 'tests/game_corpus/restart-stale/**'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'src/game_engine/evidence_funnel.py'
+      - 'tests/test_evidence_funnel.py'
+      - 'tests/test_staged_evidence_funnel.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staged-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  staged-chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install staged evidence lab
+        run: python -m pip install -e '.[reality]' pytest
+
+      - name: Unit contracts
+        run: pytest -q
+
+      - name: Install reference browser only
+        run: python -m playwright install --with-deps chromium
+
+      - name: Prove known-good lineage qualifies through staged funnel
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from game_engine.evidence_funnel import StagedEvidenceFunnel
+
+          result = StagedEvidenceFunnel(
+              install_browsers=False,
+              timeout_ms=10000,
+              sample_interval_ms=120,
+          ).run(
+              Path('tests/game_corpus/restart-good'),
+              Path('/tmp/staged-good'),
+              ('chromium',),
+          )
+          print(json.dumps(result, indent=2))
+          assert result['status'] == 'qualified', result
+          assert result['reference_browser'] == 'chromium', result
+          assert result['reference_browser_build_ids'] == ['restart-good'], result
+          assert result['behaviorally_qualified_build_ids'] == ['restart-good'], result
+          assert result['cross_browser_build_ids'] == ['restart-good'], result
+          critic_q = json.loads(Path(result['critic_reality_root'], 'qualification.json').read_text())
+          assert critic_q['full_pass_build_ids'] == ['restart-good'], critic_q
+          PY
+
+      - name: Prove stale restart stops before promotion
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from game_engine.evidence_funnel import StagedEvidenceFunnel
+
+          result = StagedEvidenceFunnel(
+              install_browsers=False,
+              timeout_ms=10000,
+              sample_interval_ms=120,
+          ).run(
+              Path('tests/game_corpus/restart-stale'),
+              Path('/tmp/staged-stale'),
+              ('chromium',),
+          )
+          print(json.dumps(result, indent=2))
+          assert result['status'] == 'behavioral_repair_required', result
+          assert result['reference_browser_build_ids'] == ['restart-stale'], result
+          assert result['behaviorally_qualified_build_ids'] == [], result
+          assert result['behavioral_repair_build_ids'] == ['restart-stale'], result
+          assert result['promotion_attempted'] is False, result
+          assert result['final_reality_root'] is None, result
+          assert result['critic_reality_root'] is None, result
+          PY
