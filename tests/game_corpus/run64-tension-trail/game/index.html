@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tension Trail</title>
+<style>
+  body{margin:0;background:#0a0a1a;overflow:hidden;display:flex;justify-content:center;align-items:center;height:100vh}
+  canvas{background:#0a0a1a;image-rendering:pixelated}
+  #ui{position:absolute;top:10px;left:10px;color:#fff;font:14px sans-serif;pointer-events:none}
+  #ui small{opacity:0.6}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">Click to anchor, drag to stretch rainbow spring, release to launch. R to restart.</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+let w=canvas.width=640,h=canvas.height=480;
+const PRNG={s:1,x:0};
+function rng(){return PRNG.x=(PRNG.x*1664525+1013904223+PRNG.s++)|0}
+function frand(){return (rng()&0xffffff)/16777216}
+const TRAIL_MAX=128,STORM_MAX=32;
+let state='playing',score=0,best=0,storm=0,combo=0,lastAction=0,coreActivations=0,progTrans=0,restarts=0,elapsed=0,tick=0,entities=0;
+const events=[],telemetry={schema_version:'0.1',snapshot(){return{
+  elapsed_ms:elapsed,tick:tick,state:state,alive:state==='playing',game_over:state==='dead',score,progress:Math.min(1,score/1000),restart_count:restarts,entity_count:entities,action_count:lastAction?1:0,last_action_ms:lastAction,core_mechanic_activations:coreActivations,progression_transitions:progTrans,state_hash:`${score}|${storm}|${combo}|${state}`
+}},events(){return events.slice()}};
+window.__GAME_ENGINE_TELEMETRY__=telemetry;
+function pushEvent(type){events.push({type,at_ms:elapsed});if(events.length>256)events.shift()}
+const unicorn={x:100,y:h-50,vx:0,vy:0,ax:0,ay:0,r:12,color:'#ff69b4',trail:[]};
+const platforms=[{x:200,y:h-80,w:60,h:10,color:'#ffb6c1'},{x:400,y:h-120,w:60,h:10,color:'#add8e6'}];
+let anchor=null,stretch=0,springHue=0;
+function reset(){
+  state='playing';score=0;storm=0;combo=0;lastAction=0;coreActivations=0;progTrans=0;restarts++;elapsed=0;tick=0;entities=0;
+  unicorn.x=100;unicorn.y=h-50;unicorn.vx=0;unicorn.vy=0;unicorn.ax=0;unicorn.ay=0;unicorn.trail=[];
+  platforms[0].x=200;platforms[0].y=h-80;platforms[1].x=400;platforms[1].y=h-120;
+  anchor=null;stretch=0;springHue=0;
+  pushEvent('run_start');
+}
+function update(dt){
+  if(state!=='playing')return;
+  elapsed+=dt*1000;tick++;
+  // physics
+  unicorn.vx+=unicorn.ax*dt;unicorn.vy+=unicorn.ay*dt;
+  unicorn.x+=unicorn.vx*dt;unicorn.y+=unicorn.vy*dt;
+  unicorn.ax=0;unicorn.ay=0.3*dt*60; // gravity
+  // trail
+  unicorn.trail.push({x:unicorn.x,y:unicorn.y,age:0});
+  if(unicorn.trail.length>TRAIL_MAX)unicorn.trail.shift();
+  entities=unicorn.trail.length;
+  // platforms drift with storm
+  platforms.forEach(p=>{
+    p.x-=storm*0.1*dt;
+    if(p.x<-p.w){p.x=w+frand()*100;p.y=h-80-frand()*100;}
+  });
+  // landing
+  let landed=false;
+  platforms.forEach(p=>{
+    if(unicorn.y+unicorn.r>p.y&&unicorn.y-unicorn.r<p.y+p.h&&unicorn.x>p.x&&unicorn.x<p.x+p.w&&unicorn.vy>0){
+      unicorn.y=p.y-unicorn.r;unicorn.vy=-Math.abs(unicorn.vy)*0.5;unicorn.vx*=0.8;
+      landed=true;score+=10+combo*2;combo++;if(score%200===0){progTrans++;pushEvent('progression_transition');}
+      pushEvent('core_mechanic_activation');coreActivations++;
+      lastAction=elapsed;pushEvent('action_accepted');
+      return;
+    }
+  });
+  if(!landed&&unicorn.y>h){
+    state='dead';pushEvent('damage_or_death');
+  }
+  // storm decay
+  storm=Math.max(0,storm-0.1*dt);
+}
+function render(){
+  ctx.clearRect(0,0,w,h);
+  // trails
+  unicorn.trail.forEach((p,i)=>{
+    const a=i/unicorn.trail.length;
+    ctx.strokeStyle=`hsla(${springHue+i*2%360},80%,50%,${a*0.5})`;
+    ctx.lineWidth=2;
+    if(i>0){
+      const prev=unicorn.trail[i-1];
+      ctx.beginPath();ctx.moveTo(prev.x,prev.y);ctx.lineTo(p.x,p.y);ctx.stroke();
+    }
+  });
+  // platforms
+  platforms.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x,p.y,p.w,p.h);
+  });
+  // unicorn
+  ctx.fillStyle=unicorn.color;
+  ctx.beginPath();ctx.arc(unicorn.x,unicorn.y,unicorn.r,0,Math.PI*2);ctx.fill();
+  // spring
+  if(anchor){
+    ctx.strokeStyle=`hsl(${springHue},80%,50%)`;
+    ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(anchor.x,anchor.y);ctx.lineTo(unicorn.x,unicorn.y);ctx.stroke();
+  }
+  // storm meter
+  ctx.fillStyle=`hsla(200,80%,40%,${storm/10})`;
+  ctx.fillRect(10,h-30,200*Math.min(1,storm/10),20);
+  ctx.strokeStyle='#fff';ctx.strokeRect(10,h-30,200,20);
+  // ui
+  ctx.fillStyle='#fff';ctx.font='16px sans-serif';
+  ctx.fillText(`Score: ${score}`,10,20);
+  ctx.fillText(`Best: ${best}`,10,40);
+}
+let last=0;
+function loop(now){
+  const dt=Math.min((now-last)/1000,0.05);
+  last=now;
+  update(dt);
+  render();
+  if(state!=='playing'&&best<score)best=score;
+  requestAnimationFrame(loop);
+}
+canvas.addEventListener('mousedown',e=>{
+  if(state!=='playing')return;
+  anchor={x:e.offsetX,y:e.offsetY};
+});
+canvas.addEventListener('mousemove',e=>{
+  if(!anchor)return;
+  const dx=e.offsetX-anchor.x,dy=e.offsetY-anchor.y;
+  stretch=Math.sqrt(dx*dx+dy*dy);
+  springHue=(Date.now()/10)%360;
+});
+canvas.addEventListener('mouseup',e=>{
+  if(!anchor)return;
+  const dx=e.offsetX-anchor.x,dy=e.offsetY-anchor.y;
+  const len=Math.sqrt(dx*dx+dy*dy);
+  if(len>5){
+    unicorn.vx=dx/len*8;unicorn.vy=dy/len*8;
+    storm+=len/10;
+    pushEvent('core_mechanic_activation');coreActivations++;
+    lastAction=elapsed;pushEvent('action_accepted');
+  }
+  anchor=null;
+});
+canvas.addEventListener('keydown',e=>{if(e.key==='r'||e.key==='R')reset();});
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
