@@ -3,11 +3,14 @@ name: Staged Evidence CI
 on:
   push:
     branches:
-      - 'agent/v0.8-staged-evidence-funnel'
+      - 'agent/**'
     paths:
       - '.github/workflows/staged-evidence-ci.yml'
+      - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_funnel.py'
       - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/repair_cycle.py'
+      - 'src/game_engine/source_falsification.py'
       - 'src/game_engine/action_causality.py'
       - 'src/game_engine/action_policy.py'
       - 'src/game_engine/playtest.py'
@@ -17,14 +20,24 @@ on:
       - 'src/game_engine/reality.py'
       - 'tests/test_evidence_funnel.py'
       - 'tests/test_staged_evidence_funnel.py'
+      - 'tests/test_repair_cycle_staged_gate.py'
+      - 'tests/test_autonomous_behavioral_gate.py'
       - 'tests/game_corpus/restart-good/**'
       - 'tests/game_corpus/restart-stale/**'
+      - 'tests/game_corpus/run64-tension-trail/**'
       - 'pyproject.toml'
   pull_request:
     paths:
+      - 'src/game_engine/autonomous.py'
       - 'src/game_engine/evidence_funnel.py'
+      - 'src/game_engine/evidence_broker.py'
+      - 'src/game_engine/repair_cycle.py'
+      - 'src/game_engine/source_falsification.py'
       - 'tests/test_evidence_funnel.py'
       - 'tests/test_staged_evidence_funnel.py'
+      - 'tests/test_repair_cycle_staged_gate.py'
+      - 'tests/test_autonomous_behavioral_gate.py'
+      - 'tests/game_corpus/run64-tension-trail/**'
 
 permissions:
   contents: read
@@ -49,6 +62,33 @@ jobs:
       - name: Unit contracts
         run: pytest -q
 
+      - name: Prove Run 64 is rejected before any browser exists
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from game_engine.evidence_funnel import StagedEvidenceFunnel
+
+          installs = []
+          result = StagedEvidenceFunnel(
+              install_browsers=True,
+              installer=lambda browsers: installs.append(tuple(browsers)),
+              timeout_ms=10000,
+              sample_interval_ms=120,
+          ).run(
+              Path('tests/game_corpus/run64-tension-trail'),
+              Path('/tmp/staged-run64'),
+              ('chromium','firefox','webkit'),
+          )
+          print(json.dumps({'result':result,'install_requests':installs}, indent=2))
+          assert result['status'] == 'semantic_falsification_failed', result
+          assert result['semantic_qualified_build_ids'] == [], result
+          assert result['semantic_blocked_build_ids'] == ['b97d9a0640'], result
+          assert result['reference_browser_build_ids'] == [], result
+          assert result['promotion_attempted'] is False, result
+          assert installs == [], installs
+          PY
+
       - name: Install reference browser only
         run: python -m playwright install --with-deps chromium
 
@@ -70,6 +110,7 @@ jobs:
           )
           print(json.dumps(result, indent=2))
           assert result['status'] == 'qualified', result
+          assert result['semantic_qualified_build_ids'] == ['restart-good'], result
           assert result['reference_browser'] == 'chromium', result
           assert result['reference_browser_build_ids'] == ['restart-good'], result
           assert result['behaviorally_qualified_build_ids'] == ['restart-good'], result
@@ -96,6 +137,7 @@ jobs:
           )
           print(json.dumps(result, indent=2))
           assert result['status'] == 'behavioral_repair_required', result
+          assert result['semantic_qualified_build_ids'] == ['restart-stale'], result
           assert result['reference_browser_build_ids'] == ['restart-stale'], result
           assert result['behaviorally_qualified_build_ids'] == [], result
           assert result['behavioral_repair_build_ids'] == ['restart-stale'], result
