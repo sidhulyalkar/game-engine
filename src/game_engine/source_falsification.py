@@ -153,6 +153,94 @@ def _restart_spawns_duplicate_raf(source: str, loop_body: str | None) -> str | N
     return None
 
 
+def _spec_text(game_spec: dict[str, Any]) -> str:
+    return " ".join([
+        str(game_spec.get("interaction_invariant", "")), str(game_spec.get("player_goal", "")),
+        str(game_spec.get("controls", "")), *(str(row) for row in game_spec.get("core_loop") or []),
+    ]).lower()
+
+
+def _stretch_power_is_contractual(game_spec: dict[str, Any]) -> bool:
+    text = _spec_text(game_spec)
+    has_stretch = bool(re.search(r"\b(?:stretch|drag|pull)\w*\b", text))
+    has_magnitude = bool(re.search(r"\b(?:length|distance|farther|further|power|speed|force|stronger)\b", text))
+    has_launch = bool(re.search(r"\b(?:launch|power|speed|force|velocity|jump|leap|dash)\w*\b", text))
+    return has_stretch and has_magnitude and has_launch
+
+
+def _normalized_constant_launch(source: str) -> str | None:
+    """Catch unit-vector launch code that discards the measured drag magnitude."""
+    length_names: set[str] = set()
+    for match in re.finditer(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:Math\.(?:sqrt|hypot)\s*\([^;]+\))\s*;?", source):
+        name = match.group(1)
+        if re.search(r"(?:len|dist|stretch|power|mag)", name, re.I): length_names.add(name)
+    for name in sorted(length_names):
+        x = re.search(rf"\b(?:[A-Za-z_$]\w*\.)*vx\s*=\s*\(?\s*-?\s*dx\s*/\s*{re.escape(name)}\s*\)?\s*\*\s*(\d+(?:\.\d+)?)\s*;", source)
+        y = re.search(rf"\b(?:[A-Za-z_$]\w*\.)*vy\s*=\s*\(?\s*-?\s*dy\s*/\s*{re.escape(name)}\s*\)?\s*\*\s*(\d+(?:\.\d+)?)\s*;", source)
+        if x and y:
+            return f"velocity normalizes dx/dy by {name} and multiplies by constants {x.group(1)}/{y.group(1)}"
+    return None
+
+
+def _double_scaled_acceleration(source: str) -> str | None:
+    """Find acceleration that already contains dt and is then multiplied by dt again."""
+    assignment = re.compile(r"\b(?P<acc>(?:[A-Za-z_$]\w*\.)*a[xy])\s*=\s*(?P<expr>[^;\n]*\b(?:dt|delta|fixedDt)\b[^;\n]*);")
+    for match in assignment.finditer(source):
+        acc = match.group("acc")
+        if "." in acc:
+            prefix, axis = acc.rsplit(".", 1); vel = f"{prefix}.v{axis[-1]}"
+        else:
+            vel = f"v{acc[-1]}"
+        if re.search(rf"\b{re.escape(vel)}\s*\+=\s*{re.escape(acc)}\s*\*\s*(?:dt|delta|fixedDt)\b", source):
+            return f"{acc} is assigned from a dt-scaled expression and {vel} multiplies {acc} by dt again"
+    return None
+
+
+def _unfocusable_canvas_keyboard(source: str) -> bool:
+    if not re.search(r"\bcanvas\.addEventListener\s*\(\s*['\"]keydown['\"]", source): return False
+    html_focusable = bool(re.search(r"<canvas\b[^>]*\btabindex\s*=", source, re.I))
+    js_focusable = bool(
+        re.search(r"\bcanvas\.tabIndex\s*=", source)
+        or re.search(r"\bcanvas\.setAttribute\s*\(\s*['\"]tabindex['\"]", source, re.I)
+        or re.search(r"\bcanvas\.focus\s*\(", source)
+    )
+    return not (html_focusable or js_focusable)
+
+
+def _duplicate_telemetry_events_member(source: str) -> bool:
+    """Detect the run-64 shape where `events: []` is overwritten by `events(){}`."""
+    starts = [m.start() for m in re.finditer(r"\b(?:const|let|var)\s+telemetry\s*=\s*\{", source, re.I)]
+    direct = re.search(r"__GAME_ENGINE_TELEMETRY__\s*=\s*\{", source)
+    if direct: starts.append(direct.start())
+    for start in starts:
+        segment = source[start:start+8000]
+        if re.search(r"\bevents\s*:\s*\[", segment) and re.search(r"\bevents\s*\([^)]*\)\s*\{", segment): return True
+    return False
+
+
+def _unenforced_declared_caps(source: str) -> list[str]:
+    names: list[str] = []
+    for match in re.finditer(r"(?:\b(?:const|let|var)\s+|,\s*)([A-Z][A-Z0-9_]*)_MAX\s*=\s*\d+(?:\.\d+)?", source):
+        stem, cap = match.group(1).lower().replace("_", ""), match.group(1) + "_MAX"
+        if len(re.findall(rf"\b{re.escape(cap)}\b", source)) != 1: continue
+        scalar_candidates = {stem, match.group(1).lower()}
+        if any(re.search(rf"\b{re.escape(name)}\s*\+=", source) for name in scalar_candidates): names.append(cap)
+    return names
+
+
+def _promised_audio_missing(source: str, game_spec: dict[str, Any]) -> str | None:
+    audio = str((game_spec.get("sensory_contract") or {}).get("audio", "")).strip()
+    if not audio: return None
+    lowered = audio.lower()
+    if any(token in lowered for token in ("optional", "none", "not required", "no audio")): return None
+    has_audio = bool(
+        re.search(r"\b(?:AudioContext|webkitAudioContext)\b", source)
+        or re.search(r"<audio\b", source, re.I)
+        or re.search(r"\bnew\s+Audio\s*\(", source)
+    )
+    return None if has_audio else audio
+
+
 def analyze_source(html: str, game_spec: dict[str, Any]) -> dict[str, Any]:
     findings: list[SourceFinding] = []
     timing = game_spec.get("timing_contract") or {}; deterministic=bool(timing.get("deterministic_seed"))
@@ -166,6 +254,24 @@ def analyze_source(html: str, game_spec: dict[str, Any]) -> dict[str, Any]:
         findings.append(SourceFinding("constant_prng_state","major",f"rng() reads {constant_seed_name} but never mutates that PRNG state.","Every RNG call can return the same value, collapsing intended spawn/visual variation."))
     if game_spec.get("telemetry_contract") and "__GAME_ENGINE_TELEMETRY__" not in html:
         findings.append(SourceFinding("missing_telemetry_contract","blocker","GameSpec declares telemetry_contract but source exposes no __GAME_ENGINE_TELEMETRY__ API.","The engine cannot independently measure agency, progression, restart, or boundedness."))
+    if _duplicate_telemetry_events_member(html):
+        findings.append(SourceFinding("duplicate_telemetry_events_member","blocker","Telemetry object declares both an events data member and events() method; the latter overwrites the former.","Telemetry event writes can call array operations on a function and crash startup/reset before gameplay."))
+
+    if _stretch_power_is_contractual(game_spec):
+        normalized=_normalized_constant_launch(html)
+        if normalized:
+            findings.append(SourceFinding("stretch_power_normalized_away","blocker",normalized,"The defining stretch-to-power mechanic is replaced by constant-speed launch; drag length cannot express mastery."))
+    if timing.get("delta_time_seconds"):
+        double_dt=_double_scaled_acceleration(html)
+        if double_dt:
+            findings.append(SourceFinding("double_scaled_acceleration_dt","blocker",double_dt,"Acceleration is scaled by frame time twice, making motion frame-dependent or orders of magnitude too weak."))
+    if _unfocusable_canvas_keyboard(html):
+        findings.append(SourceFinding("keyboard_listener_on_unfocusable_canvas","blocker","keydown is attached directly to canvas, but the canvas has no tabindex/focus setup.","Advertised keyboard controls such as restart can never receive focus in normal pointer play."))
+    for cap in _unenforced_declared_caps(html):
+        findings.append(SourceFinding("declared_state_cap_unused","major",f"{cap} is declared as a scalar state bound but never referenced after declaration while that state grows.","The corresponding pressure/state variable can grow beyond its intended bound and destabilize later gameplay."))
+    missing_audio=_promised_audio_missing(html,game_spec)
+    if missing_audio:
+        findings.append(SourceFinding("promised_audio_missing","major",f"GameSpec materially promises audio ({missing_audio[:160]}) but source contains no local audio implementation.","A promised feedback channel is absent; timing, tension, and success cues lose clarity even if mechanics still run."))
 
     loop_body=_function_body(html,"loop")
     if timing.get("max_frame_dt_seconds") is not None and loop_body:
