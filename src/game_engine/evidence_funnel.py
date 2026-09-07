@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
-from .reality import discover_builds
+from .evidence_broker import EvidenceBroker, write_critic_reality_view
+from .reality import BrowserRealityLab, discover_builds
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,23 @@ class BrowserStagePlan:
     reference_browser: str
     promotion_browsers: tuple[str, ...]
     final_browsers: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class StagedEvidenceResult:
+    status: str
+    reference_browser: str
+    promotion_browsers: list[str]
+    reference_browser_build_ids: list[str]
+    behaviorally_qualified_build_ids: list[str]
+    behavioral_repair_build_ids: list[str]
+    insufficient_evidence_build_ids: list[str]
+    behavioral_probe_errors: dict[str, str]
+    promotion_attempted: bool
+    cross_browser_build_ids: list[str]
+    promotion_view_root: str | None
+    final_reality_root: str | None
+    critic_reality_root: str | None
 
 
 def plan_browser_stages(browsers: Iterable[str]) -> BrowserStagePlan:
@@ -88,3 +106,167 @@ def write_build_view(
     }
     (output_root / "promotion-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
+
+
+class StagedEvidenceFunnel:
+    """Buy expensive compatibility evidence only after cheap gameplay evidence survives.
+
+    This coordinator is deliberately lineage-local: callers can run it on original
+    builder output or on a repair field. It does not choose concepts or repair games.
+    It only proves one implementation lineage through:
+
+      reference browser -> M4 behavior -> promoted build view -> full browser field.
+    """
+
+    def __init__(
+        self,
+        *,
+        install_browsers: bool = False,
+        installer: Callable[[tuple[str, ...]], None] | None = None,
+        reality_factory=BrowserRealityLab,
+        broker_factory=EvidenceBroker,
+        timeout_ms: int = 12_000,
+        sample_interval_ms: int = 160,
+    ):
+        self.install_browsers = install_browsers
+        self.installer = installer
+        self.reality_factory = reality_factory
+        self.broker_factory = broker_factory
+        self.timeout_ms = timeout_ms
+        self.sample_interval_ms = sample_interval_ms
+        if self.install_browsers and self.installer is None:
+            raise ValueError("install_browsers=True requires an installer callback")
+
+    def _install(self, browsers: tuple[str, ...]) -> None:
+        if self.install_browsers and browsers:
+            assert self.installer is not None
+            self.installer(browsers)
+
+    def run(
+        self,
+        builds_root: Path,
+        output_dir: Path,
+        browsers: Iterable[str],
+    ) -> dict:
+        plan = plan_browser_stages(browsers)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._install((plan.reference_browser,))
+        reference_root = output_dir / "reference-reality"
+        reference = self.reality_factory(
+            browsers=(plan.reference_browser,),
+            timeout_ms=self.timeout_ms,
+        ).run(builds_root, reference_root)
+        reference_ids = [str(value) for value in reference.get("full_pass_build_ids", [])]
+        if not reference_ids:
+            result = StagedEvidenceResult(
+                status="reference_browser_failed",
+                reference_browser=plan.reference_browser,
+                promotion_browsers=list(plan.promotion_browsers),
+                reference_browser_build_ids=[],
+                behaviorally_qualified_build_ids=[],
+                behavioral_repair_build_ids=[],
+                insufficient_evidence_build_ids=[],
+                behavioral_probe_errors={},
+                promotion_attempted=False,
+                cross_browser_build_ids=[],
+                promotion_view_root=None,
+                final_reality_root=None,
+                critic_reality_root=None,
+            )
+            return self._write_result(output_dir, result)
+
+        behavior_root = output_dir / "behavior"
+        behavior = self.broker_factory(
+            browsers=(plan.reference_browser,),
+            sample_interval_ms=self.sample_interval_ms,
+        ).run(builds_root, behavior_root, reference_root)
+        qualified = [str(value) for value in behavior.get("behaviorally_qualified_build_ids", [])]
+        repair = [str(value) for value in behavior.get("behavioral_repair_build_ids", [])]
+        insufficient = [str(value) for value in behavior.get("insufficient_evidence_build_ids", [])]
+        probe_errors = {
+            str(key): str(value)
+            for key, value in dict(behavior.get("probe_errors", {})).items()
+        }
+        if not qualified:
+            if insufficient or probe_errors:
+                status = "behavioral_evidence_incomplete"
+            elif repair:
+                status = "behavioral_repair_required"
+            else:
+                status = "behavioral_failure"
+            result = StagedEvidenceResult(
+                status=status,
+                reference_browser=plan.reference_browser,
+                promotion_browsers=list(plan.promotion_browsers),
+                reference_browser_build_ids=reference_ids,
+                behaviorally_qualified_build_ids=[],
+                behavioral_repair_build_ids=repair,
+                insufficient_evidence_build_ids=insufficient,
+                behavioral_probe_errors=probe_errors,
+                promotion_attempted=False,
+                cross_browser_build_ids=[],
+                promotion_view_root=None,
+                final_reality_root=None,
+                critic_reality_root=None,
+            )
+            return self._write_result(output_dir, result)
+
+        promotion_view = output_dir / "promotion-view"
+        write_build_view(builds_root, promotion_view, qualified)
+
+        # Firefox/WebKit or other compatibility engines are installed only here,
+        # after the candidate has proved causal controls/restart/agency in the
+        # reference engine. A behavioral failure therefore never pays this cost.
+        self._install(plan.promotion_browsers)
+        final_reality_root = output_dir / "final-reality"
+        final_reality = self.reality_factory(
+            browsers=plan.final_browsers,
+            timeout_ms=self.timeout_ms,
+        ).run(promotion_view, final_reality_root)
+        cross_browser = [str(value) for value in final_reality.get("full_pass_build_ids", [])]
+        if not cross_browser:
+            result = StagedEvidenceResult(
+                status="cross_browser_failed",
+                reference_browser=plan.reference_browser,
+                promotion_browsers=list(plan.promotion_browsers),
+                reference_browser_build_ids=reference_ids,
+                behaviorally_qualified_build_ids=qualified,
+                behavioral_repair_build_ids=repair,
+                insufficient_evidence_build_ids=insufficient,
+                behavioral_probe_errors=probe_errors,
+                promotion_attempted=True,
+                cross_browser_build_ids=[],
+                promotion_view_root=str(promotion_view),
+                final_reality_root=str(final_reality_root),
+                critic_reality_root=None,
+            )
+            return self._write_result(output_dir, result)
+
+        # Behavior was proved on the reference browser; final compatibility can only
+        # narrow that set. Publish one final reality envelope for expensive critics.
+        final_ids = sorted(set(cross_browser) & set(qualified))
+        critic_root = output_dir / "critic-reality"
+        write_critic_reality_view(final_reality_root, critic_root, final_ids)
+        result = StagedEvidenceResult(
+            status="qualified",
+            reference_browser=plan.reference_browser,
+            promotion_browsers=list(plan.promotion_browsers),
+            reference_browser_build_ids=reference_ids,
+            behaviorally_qualified_build_ids=qualified,
+            behavioral_repair_build_ids=repair,
+            insufficient_evidence_build_ids=insufficient,
+            behavioral_probe_errors=probe_errors,
+            promotion_attempted=True,
+            cross_browser_build_ids=final_ids,
+            promotion_view_root=str(promotion_view),
+            final_reality_root=str(final_reality_root),
+            critic_reality_root=str(critic_root),
+        )
+        return self._write_result(output_dir, result)
+
+    @staticmethod
+    def _write_result(output_dir: Path, result: StagedEvidenceResult) -> dict:
+        payload = asdict(result)
+        (output_dir / "staged-evidence.json").write_text(json.dumps(payload, indent=2) + "\n")
+        return payload
