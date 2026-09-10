@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "template": "puma-platformer",
+  "seed": 13,
+  "setup": {"world": 0},
+  "actions": [
+    {"ticks": 20, "buttons": []},
+    {"ticks": 80, "buttons": ["right"]},
+    {"ticks": 50, "buttons": ["right", "jump"]},
+    {"ticks": 45, "buttons": ["right"]}
+  ],
+  "expect": {"phase": "play", "max_deaths": 0}
+}

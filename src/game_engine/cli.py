@@ -53,6 +53,8 @@ def cmd_pack(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="game-engine", description="Evolutionary swarm studio for tiny web games")
     sub = parser.add_subparsers(dest="command", required=True)
+    from .playtesting.commands import register
+    register(sub)
 
     ideate = sub.add_parser("ideate", help="generate, mutate, judge, and rank game concepts")
     ideate.add_argument("brief")

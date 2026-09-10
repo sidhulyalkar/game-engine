@@ -18,6 +18,9 @@ game-engine = "game_engine.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"game_engine.playtesting" = ["*.mjs", "*.cs"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

@@ -139,7 +139,22 @@ game-engine swarm-ideate examples/briefs/js13k-2026.json \
 
 Each provider/role assignment runs independently and failure-isolated. The run records `contributions.json`, so a flaky endpoint or malformed model response cannot silently poison the rest of the swarm. NVIDIA NIM is supported through the same adapter because its hosted endpoint is OpenAI-compatible.
 
-## Prototype forge
+## Template playtesting and repair
+
+The studio now includes instrumented adapters for **Unicorn Stampede** (JavaScript)
+and **Puma: Wildbound** (the actual C# core used by Unity). It can record bounded
+input scenarios, verify deterministic replays, flag trace failures and stationary
+NPC hypotheses, and retest isolated exact-edit candidates. It does not infer fun
+or automatically promote games. Rendering and release packaging remain separate
+gates. See [setup, commands, evidence scope, and execution limits](docs/PLAYTESTING.md).
+
+```bash
+game-engine playtest ../unicorn-stampede examples/playtests/unicorn-tutorial.json --out runs/tutorial
+game-engine playtest-replay ../unicorn-stampede runs/tutorial --out runs/replay
+game-engine playtest-suite puma-platformer ../puma-platformer --out runs/puma
+```
+
+## Prototype forge commands
 
 Once an ideation run has produced `winner.json`, enabled providers can compete again as implementation engineers:
 

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "template": "unicorn-stampede",
+  "seed": 13,
+  "setup": {"entry": "menu", "world": 0, "difficulty": 0},
+  "actions": [
+    {"ticks": 1, "buttons": ["start"]},
+    {"ticks": 30, "buttons": ["right"]},
+    {"ticks": 1, "buttons": ["switch"]},
+    {"ticks": 30, "buttons": ["up"]}
+  ],
+  "expect": {"phase": "play", "min_progress": 0.1}
+}
