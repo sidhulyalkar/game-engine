@@ -1,0 +1,60 @@
+name: Playtest templates
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/playtest-*', 'agent/**']
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: sidhulyalkar/unicorn-stampede
+          ref: 2303fa2012a9388c8eaab2ea8063129b7a9e4d36
+          path: fixtures/unicorn
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: sidhulyalkar/puma-platformer
+          ref: 34cd95c70312a3beb88def0a2c3fcb4962a221b6
+          path: fixtures/puma
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: python -m pip install -e . pytest
+      - name: Contracts and real template integrations
+        env:
+          UNICORN_SOURCE: ${{ github.workspace }}/fixtures/unicorn
+          PUMA_SOURCE: ${{ github.workspace }}/fixtures/puma
+        run: pytest -q
+      - name: Existing Unicorn gameplay regression cases
+        working-directory: fixtures/unicorn
+        run: |
+          node scripts/smoke.mjs
+          node scripts/dash-contract-smoke.mjs
+          node scripts/progression-smoke.mjs
+      - name: Existing Puma core regression cases
+        run: dotnet run --project fixtures/puma/tests/Wildbound.Tests.csproj --configuration Release
+      - name: Three-world stress and replay
+        run: |
+          game-engine playtest-suite unicorn-stampede fixtures/unicorn --ticks 1200 --out evidence/unicorn
+          game-engine playtest-suite puma-platformer fixtures/puma --ticks 2400 --out evidence/puma
+          game-engine playtest-replay fixtures/unicorn evidence/unicorn/world-0 --out evidence/unicorn-replay
+          game-engine playtest-replay fixtures/puma evidence/puma/world-0 --out evidence/puma-replay
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: template-playtest-evidence
+          path: evidence
+          if-no-files-found: warn
