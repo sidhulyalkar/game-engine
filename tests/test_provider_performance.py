@@ -46,10 +46,17 @@ def test_provider_performance_stays_phase_specific_and_descriptive(tmp_path):
         "cross_browser_build_ids": [],
     })
 
-    write_json(run / "audit-a" / "audits.json", [
-        {"provider": "kimi", "build_id": "n-good", "ok": False, "recovery_attempted": True},
-        {"provider": "nemotron", "build_id": "n-good", "ok": True, "recovery_attempted": True},
-    ])
+    # Current audit artifacts are BuildAudit aggregates. The top-level provider is
+    # the builder and MUST NOT be credited as a critic; actual critics are nested.
+    write_json(run / "audit-a" / "audits.json", [{
+        "provider": "nemotron-builder",
+        "build_id": "n-good",
+        "critic_count": 1,
+        "critic_audits": [
+            {"provider": "kimi", "model_id": "kimi-model", "build_id": "n-good", "ok": False, "recovery_attempted": True},
+            {"provider": "nemotron-critic", "model_id": "nemotron-model", "build_id": "n-good", "ok": True, "recovery_attempted": True},
+        ],
+    }])
     write_json(run / "behavior-repairs-b" / "builds.json", [
         {"provider": "kimi", "parent_build_id": "n-dead", "build_id": "k-fixed", "ok": True},
     ])
@@ -89,9 +96,26 @@ def test_provider_performance_stays_phase_specific_and_descriptive(tmp_path):
     assert providers["kimi"]["critics"]["calls"] == 1
     assert providers["kimi"]["critics"]["failures"] == 1
     assert providers["kimi"]["critics"]["serialization_recoveries"] == 1
+    assert providers["kimi"]["critics"]["model_ids"] == {"kimi-model": 1}
     assert providers["kimi"]["repairs"]["behavioral_attempts"] == 1
     assert providers["kimi"]["repairs"]["behavioral_successes"] == 1
     assert providers["kimi"]["downstream"]["cross_browser_qualified"] == 1
+
+    assert providers["nemotron-critic"]["critics"]["calls"] == 1
+    assert providers["nemotron-critic"]["critics"]["successes"] == 1
+    assert providers["nemotron-critic"]["critics"]["successful_recoveries"] == 1
+    assert providers["nemotron-critic"]["critics"]["model_ids"] == {"nemotron-model": 1}
+    assert "nemotron-builder" not in providers
+
+
+def test_flat_legacy_critic_rows_remain_supported(tmp_path):
+    run = tmp_path / "run"
+    write_json(run / "audit-a" / "audits.json", [
+        {"provider": "legacy-critic", "build_id": "x", "ok": True, "recovery_attempted": False},
+    ])
+    payload = compile_provider_performance(run)
+    assert payload["providers"]["legacy-critic"]["critics"]["calls"] == 1
+    assert payload["providers"]["legacy-critic"]["critics"]["successes"] == 1
 
 
 def test_provider_performance_does_not_invent_unknown_latency_or_global_score(tmp_path):
