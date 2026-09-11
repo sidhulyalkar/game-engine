@@ -6,12 +6,23 @@ from game_engine.evidence_artifacts import (
     compile_scheduler_decision,
     compile_staged_ledgers,
     compile_template_ledger,
+    enrich_generated_ledger_with_critic_audit,
 )
 
 
 def write_json(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload) + "\n")
+
+
+def staged_pass(path, build_id="g"):
+    write_json(path, {
+        "semantic_qualified_build_ids": [build_id],
+        "reference_browser_build_ids": [build_id],
+        "behaviorally_qualified_build_ids": [build_id],
+        "promotion_attempted": True,
+        "cross_browser_build_ids": [build_id],
+    })
 
 
 def test_staged_compiler_preserves_distinct_build_capabilities(tmp_path):
@@ -38,7 +49,6 @@ def test_staged_compiler_preserves_distinct_build_capabilities(tmp_path):
     assert rows["blocked"]["scope_states"]["reference_browser"] == "not_evaluated"
 
     assert rows["dead"]["scope_states"]["causal_controls"] == "failed"
-    # The dead build was stopped at M4, so compatibility promotion never ran.
     assert rows["dead"]["scope_states"]["cross_browser"] == "not_evaluated"
 
     assert rows["gap"]["scope_states"]["causal_controls"] == "incomplete"
@@ -63,13 +73,7 @@ def test_staged_compiler_fails_closed_when_payload_has_no_subjects(tmp_path):
 
 def test_scheduler_decision_can_be_recompiled_from_ledger_without_running_any_action(tmp_path):
     staged = tmp_path / "staged-evidence.json"
-    write_json(staged, {
-        "semantic_qualified_build_ids": ["g"],
-        "reference_browser_build_ids": ["g"],
-        "behaviorally_qualified_build_ids": ["g"],
-        "promotion_attempted": True,
-        "cross_browser_build_ids": ["g"],
-    })
+    staged_pass(staged)
     compile_staged_ledgers(staged, tmp_path / "ledgers")
     output = tmp_path / "decision.json"
     decision = compile_scheduler_decision(tmp_path / "ledgers" / "g.json", output)
@@ -77,6 +81,105 @@ def test_scheduler_decision_can_be_recompiled_from_ledger_without_running_any_ac
     assert decision["decision"]["action"] == "run_independent_critics"
     assert decision["decision"]["spend_class"] == "llm_critics"
     assert json.loads(output.read_text()) == decision
+
+
+def test_critic_repair_verdict_enriches_ledger_without_touching_objective_claims(tmp_path):
+    staged = tmp_path / "staged.json"
+    staged_pass(staged)
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    original = json.loads((tmp_path / "ledgers" / "g.json").read_text())
+    audit = tmp_path / "audit-summary.json"
+    write_json(audit, {
+        "ranking": [
+            {"build_id": "g", "status": "repair", "critic_count": 2, "overall": 5.4},
+        ]
+    })
+
+    enriched = enrich_generated_ledger_with_critic_audit(
+        tmp_path / "ledgers" / "g.json",
+        audit,
+        tmp_path / "enriched.json",
+    )
+    states = enriched["scope_states"]
+    for scope in (
+        "source_semantics", "reference_browser", "causal_controls",
+        "restart_integrity", "independent_pixels", "cross_browser",
+    ):
+        assert states[scope] == original["scope_states"][scope] == "qualified"
+    assert states["critic_quorum"] == "qualified"
+    assert states["critic_resolution"] == "repair_required"
+    assert enriched["shadow_scheduler_decision"]["action"] == "repair_critic_findings"
+    assert enriched["shadow_scheduler_decision"]["spend_class"] == "bounded_llm"
+
+
+def test_critic_advance_verdict_moves_scheduler_to_human_playtest(tmp_path):
+    staged = tmp_path / "staged.json"
+    staged_pass(staged)
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    audit = tmp_path / "audit-summary.json"
+    write_json(audit, {
+        "ranking": [{"build_id": "g", "status": "advance", "critic_count": 2}],
+    })
+    enriched = enrich_generated_ledger_with_critic_audit(
+        tmp_path / "ledgers" / "g.json", audit, tmp_path / "advance.json"
+    )
+    assert enriched["scope_states"]["critic_quorum"] == "qualified"
+    assert enriched["scope_states"]["critic_resolution"] == "qualified"
+    assert enriched["shadow_scheduler_decision"]["action"] == "collect_human_playtest"
+
+
+def test_single_critic_does_not_make_repair_or_advance_authoritative(tmp_path):
+    staged = tmp_path / "staged.json"
+    staged_pass(staged)
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    audit = tmp_path / "audit-summary.json"
+    write_json(audit, {
+        "ranking": [{"build_id": "g", "status": "repair", "critic_count": 1}],
+    })
+    enriched = enrich_generated_ledger_with_critic_audit(
+        tmp_path / "ledgers" / "g.json", audit, tmp_path / "single.json"
+    )
+    assert enriched["scope_states"]["critic_quorum"] == "incomplete"
+    assert enriched["scope_states"]["critic_resolution"] == "incomplete"
+    assert enriched["shadow_scheduler_decision"]["action"] == "rerun_independent_critics"
+
+
+def test_critic_reject_verdict_is_terminal_in_scheduler(tmp_path):
+    staged = tmp_path / "staged.json"
+    staged_pass(staged)
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    audit = tmp_path / "audit-summary.json"
+    write_json(audit, {
+        "ranking": [{"build_id": "g", "status": "reject", "critic_count": 2}],
+    })
+    enriched = enrich_generated_ledger_with_critic_audit(
+        tmp_path / "ledgers" / "g.json", audit, tmp_path / "reject.json"
+    )
+    assert enriched["scope_states"]["critic_resolution"] == "failed"
+    assert enriched["shadow_scheduler_decision"]["action"] == "halt_critic_rejection"
+    assert enriched["shadow_scheduler_decision"]["terminal"] is True
+
+
+def test_critic_enrichment_fails_closed_on_sibling_or_duplicate_audit_rows(tmp_path):
+    staged = tmp_path / "staged.json"
+    staged_pass(staged)
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    missing = tmp_path / "missing.json"
+    write_json(missing, {"ranking": [{"build_id": "other", "status": "advance", "critic_count": 2}]})
+    with pytest.raises(ValueError, match="no row for build g"):
+        enrich_generated_ledger_with_critic_audit(
+            tmp_path / "ledgers" / "g.json", missing, tmp_path / "out.json"
+        )
+
+    duplicate = tmp_path / "duplicate.json"
+    write_json(duplicate, {"ranking": [
+        {"build_id": "g", "status": "advance", "critic_count": 2},
+        {"build_id": "g", "status": "repair", "critic_count": 2},
+    ]})
+    with pytest.raises(ValueError, match="duplicate rows"):
+        enrich_generated_ledger_with_critic_audit(
+            tmp_path / "ledgers" / "g.json", duplicate, tmp_path / "out.json"
+        )
 
 
 def test_generated_scheduler_rejects_template_lineage_ownership(tmp_path):
@@ -139,13 +242,7 @@ def test_template_replay_mismatch_is_explicit_failure(tmp_path):
 
 def test_artifact_references_are_preserved_for_auditability(tmp_path):
     staged = tmp_path / "staged-evidence.json"
-    write_json(staged, {
-        "semantic_qualified_build_ids": ["g"],
-        "reference_browser_build_ids": ["g"],
-        "behaviorally_qualified_build_ids": ["g"],
-        "promotion_attempted": False,
-        "cross_browser_build_ids": ["g"],
-    })
+    staged_pass(staged)
     payload = compile_staged_ledgers(staged, tmp_path / "ledgers")["g"]
     assert payload["claims"]
     assert all(claim["artifact"] == str(staged) for claim in payload["claims"])
