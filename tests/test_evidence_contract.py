@@ -4,6 +4,7 @@ from game_engine.evidence_contract import (
     claims_from_staged_evidence,
     claims_from_template_report,
     critic_quorum_claim,
+    critic_resolution_claim,
     regression_claim,
     replay_claim,
 )
@@ -40,10 +41,11 @@ def test_staged_web_pass_does_not_inherit_template_replay_or_fun():
         assert ledger.state(scope) == "qualified"
     assert ledger.state("instrumented_simulation") == "not_evaluated"
     assert ledger.state("exact_replay") == "not_evaluated"
+    assert ledger.state("critic_resolution") == "not_evaluated"
     assert ledger.state("human_fun") == "not_evaluated"
 
 
-def test_behavioral_repair_candidate_is_failed_not_qualified():
+def test_behavioral_repair_candidate_keeps_historical_failed_state():
     claims = claims_from_staged_evidence({
         "semantic_qualified_build_ids": ["game"],
         "reference_browser_build_ids": ["game"],
@@ -71,13 +73,22 @@ def test_incomplete_claim_prevents_positive_claim_from_silently_certifying_scope
     assert not ledger.qualified(["causal_controls"])
 
 
+def test_repair_required_dominates_incomplete_and_positive_without_becoming_rejection():
+    ledger = EvidenceLedger("x", "lineage", [
+        EvidenceClaim("critic_resolution", "qualified", "old-critics"),
+        EvidenceClaim("critic_resolution", "incomplete", "partial-critics"),
+        EvidenceClaim("critic_resolution", "repair_required", "current-critics"),
+    ])
+    assert ledger.state("critic_resolution") == "repair_required"
+
+
 def test_failure_dominates_all_other_claim_states():
     ledger = EvidenceLedger("x", "lineage", [
-        EvidenceClaim("cross_browser", "qualified", "old-run"),
-        EvidenceClaim("cross_browser", "incomplete", "partial-run"),
-        EvidenceClaim("cross_browser", "failed", "new-run"),
+        EvidenceClaim("critic_resolution", "qualified", "old-run"),
+        EvidenceClaim("critic_resolution", "repair_required", "repair-run"),
+        EvidenceClaim("critic_resolution", "failed", "new-run"),
     ])
-    assert ledger.state("cross_browser") == "failed"
+    assert ledger.state("critic_resolution") == "failed"
 
 
 def test_replay_regression_and_critic_claims_remain_independent():
@@ -85,10 +96,12 @@ def test_replay_regression_and_critic_claims_remain_independent():
         replay_claim(True),
         regression_claim(False),
         critic_quorum_claim(1),
+        critic_resolution_claim("advance", 1),
     ])
     assert ledger.state("exact_replay") == "qualified"
     assert ledger.state("template_regressions") == "failed"
     assert ledger.state("critic_quorum") == "incomplete"
+    assert ledger.state("critic_resolution") == "incomplete"
     assert ledger.state("human_fun") == "not_evaluated"
 
 
@@ -97,3 +110,17 @@ def test_critic_quorum_requires_two_independent_successes():
     assert critic_quorum_claim(1).state == "incomplete"
     assert critic_quorum_claim(2).state == "qualified"
     assert critic_quorum_claim(5).state == "qualified"
+
+
+def test_critic_resolution_requires_quorum_before_any_verdict_is_authoritative():
+    for verdict in ("advance", "repair", "reject"):
+        claim = critic_resolution_claim(verdict, 1)
+        assert claim.state == "incomplete"
+        assert "critic_count=1" in (claim.detail or "")
+
+
+def test_critic_resolution_separates_advance_repair_and_reject():
+    assert critic_resolution_claim("advance", 2).state == "qualified"
+    assert critic_resolution_claim("repair", 2).state == "repair_required"
+    assert critic_resolution_claim("reject", 2).state == "failed"
+    assert critic_resolution_claim("unknown", 2).state == "incomplete"
