@@ -17,6 +17,7 @@ on:
     branches:
       - main
       - agent/v0.1-swarm-foundry
+      - agent/v0.9-unified-evidence
     paths:
       - '.github/workflows/autonomous-studio.yml'
       - 'studio.nvidia*.json'
@@ -110,7 +111,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Final promotion remains blocked until behavioral and player-facing evidence exists." >> "$GITHUB_STEP_SUMMARY"
+          echo "Automated promotion remains blocked until player-facing preference/fun evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()
