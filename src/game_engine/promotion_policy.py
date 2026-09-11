@@ -27,6 +27,7 @@ TEMPLATE_REPLAY_ELIGIBLE = (
 FINAL_PLAYER_PROMOTION = (
     *GENERATED_CRITIC_ELIGIBLE,
     "critic_quorum",
+    "critic_resolution",
     "human_fun",
 )
 
@@ -36,6 +37,7 @@ class PromotionDecision:
     status: str
     required_scopes: tuple[str, ...]
     qualified_scopes: tuple[str, ...]
+    repair_scopes: tuple[str, ...]
     failed_scopes: tuple[str, ...]
     incomplete_scopes: tuple[str, ...]
     missing_scopes: tuple[str, ...]
@@ -57,6 +59,7 @@ def evaluate_promotion(
         raise ValueError("promotion policy requires at least one evidence scope")
 
     qualified: list[str] = []
+    repair: list[str] = []
     failed: list[str] = []
     incomplete: list[str] = []
     missing: list[str] = []
@@ -64,6 +67,8 @@ def evaluate_promotion(
         state = ledger.state(scope)
         if state == "qualified":
             qualified.append(scope)
+        elif state == "repair_required":
+            repair.append(scope)
         elif state == "failed":
             failed.append(scope)
         elif state == "incomplete":
@@ -73,6 +78,8 @@ def evaluate_promotion(
 
     if failed:
         status = "blocked_failure"
+    elif repair:
+        status = "blocked_repair_required"
     elif incomplete:
         status = "blocked_incomplete_evidence"
     elif missing:
@@ -84,6 +91,7 @@ def evaluate_promotion(
         status=status,
         required_scopes=required,
         qualified_scopes=tuple(qualified),
+        repair_scopes=tuple(repair),
         failed_scopes=tuple(failed),
         incomplete_scopes=tuple(incomplete),
         missing_scopes=tuple(missing),
