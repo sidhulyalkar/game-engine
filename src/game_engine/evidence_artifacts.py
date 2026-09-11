@@ -9,6 +9,8 @@ from .evidence_contract import (
     EvidenceLedger,
     claims_from_staged_evidence,
     claims_from_template_report,
+    critic_quorum_claim,
+    critic_resolution_claim,
     regression_claim,
     replay_claim,
     write_ledger,
@@ -72,6 +74,52 @@ def compile_staged_ledgers(
     }
     (output_dir / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     return rows
+
+
+def enrich_generated_ledger_with_critic_audit(
+    ledger_path: Path,
+    audit_summary_path: Path,
+    output_path: Path,
+) -> dict:
+    """Attach critic quorum and verdict without mutating objective evidence.
+
+    Audit summary rows are build-scoped. A build-id mismatch fails closed instead of
+    borrowing a sibling's critic verdict. Existing critic claims are replaced rather
+    than duplicated so replaying the same enrichment is deterministic.
+    """
+    ledger = _ledger_from_payload(json.loads(ledger_path.read_text()))
+    if ledger.lineage not in {"generated-web", "generated", "behavioral-repair", "critic-repair"}:
+        raise ValueError(f"critic enrichment does not own lineage {ledger.lineage!r}")
+
+    audit = json.loads(audit_summary_path.read_text())
+    ranking = [row for row in audit.get("ranking", []) if isinstance(row, dict)]
+    matches = [row for row in ranking if str(row.get("build_id")) == ledger.subject_id]
+    if not matches:
+        raise ValueError(f"audit summary has no row for build {ledger.subject_id}")
+    if len(matches) != 1:
+        raise ValueError(f"audit summary has duplicate rows for build {ledger.subject_id}")
+    row = matches[0]
+    count = int(row.get("critic_count", 0))
+    status = str(row.get("status") or "")
+
+    preserved = [
+        claim for claim in ledger.claims
+        if claim.scope not in {"critic_quorum", "critic_resolution"}
+    ]
+    artifact = str(audit_summary_path)
+    preserved.extend([
+        critic_quorum_claim(count, artifact=artifact),
+        critic_resolution_claim(status, count, artifact=artifact),
+    ])
+    enriched = EvidenceLedger(
+        subject_id=ledger.subject_id,
+        lineage=ledger.lineage,
+        claims=preserved,
+    )
+    payload = write_ledger(output_path, enriched)
+    payload["shadow_scheduler_decision"] = asdict(next_generated_action(enriched))
+    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def compile_scheduler_decision(
