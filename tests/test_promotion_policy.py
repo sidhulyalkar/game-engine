@@ -20,6 +20,7 @@ def test_generated_candidate_needs_every_objective_scope_before_critic_spend():
     decision = evaluate_promotion(ledger, GENERATED_CRITIC_ELIGIBLE)
     assert decision.eligible
     assert decision.missing_scopes == ()
+    assert decision.repair_scopes == ()
 
 
 def test_missing_cross_browser_blocks_generated_critic_eligibility():
@@ -43,6 +44,18 @@ def test_observed_failure_dominates_missing_and_incomplete_for_promotion():
     assert "cross_browser" in decision.missing_scopes
 
 
+def test_repair_required_is_distinct_from_rejection_and_missing_evidence():
+    scopes = [EvidenceClaim(scope, "qualified", "fixture") for scope in FINAL_PLAYER_PROMOTION]
+    scopes = [claim for claim in scopes if claim.scope != "critic_resolution"]
+    scopes.append(EvidenceClaim("critic_resolution", "repair_required", "critics"))
+    decision = evaluate_promotion(EvidenceLedger("x", "generated", scopes), FINAL_PLAYER_PROMOTION)
+    assert decision.status == "blocked_repair_required"
+    assert decision.repair_scopes == ("critic_resolution",)
+    assert decision.failed_scopes == ()
+    assert decision.incomplete_scopes == ()
+    assert decision.missing_scopes == ()
+
+
 def test_template_replay_policy_does_not_require_browser_or_fun():
     ledger = ledger_with(TEMPLATE_REPLAY_ELIGIBLE, lineage="template")
     decision = evaluate_promotion(ledger, TEMPLATE_REPLAY_ELIGIBLE)
@@ -57,11 +70,18 @@ def test_template_pass_cannot_be_reused_as_generated_critic_evidence():
 
 
 def test_automated_generated_evidence_can_never_claim_final_player_promotion_without_human_fun():
-    automated = (*GENERATED_CRITIC_ELIGIBLE, "critic_quorum")
+    automated = (*GENERATED_CRITIC_ELIGIBLE, "critic_quorum", "critic_resolution")
     ledger = ledger_with(automated)
     decision = evaluate_promotion(ledger, FINAL_PLAYER_PROMOTION)
     assert decision.status == "blocked_missing_evidence"
     assert decision.missing_scopes == ("human_fun",)
+
+
+def test_critic_quorum_alone_does_not_authorize_player_testing_or_final_promotion():
+    automated = (*GENERATED_CRITIC_ELIGIBLE, "critic_quorum")
+    decision = evaluate_promotion(ledger_with(automated), FINAL_PLAYER_PROMOTION)
+    assert decision.status == "blocked_missing_evidence"
+    assert decision.missing_scopes == ("critic_resolution", "human_fun")
 
 
 def test_human_fun_failure_blocks_even_when_every_automated_gate_passes():
