@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from game_engine.evidence_artifacts import compile_staged_ledgers, compile_template_ledger
+from game_engine.evidence_artifacts import (
+    compile_scheduler_decision,
+    compile_staged_ledgers,
+    compile_template_ledger,
+)
 
 
 def write_json(path, payload):
@@ -42,6 +46,11 @@ def test_staged_compiler_preserves_distinct_build_capabilities(tmp_path):
 
     index = json.loads((tmp_path / "ledgers" / "index.json").read_text())
     assert index["subjects"] == ["blocked", "dead", "gap", "good"]
+    assert index["scheduler_mode"] == "shadow"
+    assert index["shadow_scheduler_decisions"]["blocked"]["action"] == "repair_source_contract"
+    assert index["shadow_scheduler_decisions"]["dead"]["action"] == "repair_behavior"
+    assert index["shadow_scheduler_decisions"]["gap"]["action"] == "rerun_behavior_evidence"
+    assert index["shadow_scheduler_decisions"]["good"]["action"] == "run_independent_critics"
     assert all((tmp_path / "ledgers" / name).exists() for name in index["ledgers"].values())
 
 
@@ -50,6 +59,38 @@ def test_staged_compiler_fails_closed_when_payload_has_no_subjects(tmp_path):
     write_json(staged, {"status": "infrastructure_error"})
     with pytest.raises(ValueError, match="no build identities"):
         compile_staged_ledgers(staged, tmp_path / "ledgers")
+
+
+def test_scheduler_decision_can_be_recompiled_from_ledger_without_running_any_action(tmp_path):
+    staged = tmp_path / "staged-evidence.json"
+    write_json(staged, {
+        "semantic_qualified_build_ids": ["g"],
+        "reference_browser_build_ids": ["g"],
+        "behaviorally_qualified_build_ids": ["g"],
+        "promotion_attempted": True,
+        "cross_browser_build_ids": ["g"],
+    })
+    compile_staged_ledgers(staged, tmp_path / "ledgers")
+    output = tmp_path / "decision.json"
+    decision = compile_scheduler_decision(tmp_path / "ledgers" / "g.json", output)
+    assert decision["mode"] == "shadow"
+    assert decision["decision"]["action"] == "run_independent_critics"
+    assert decision["decision"]["spend_class"] == "llm_critics"
+    assert json.loads(output.read_text()) == decision
+
+
+def test_generated_scheduler_rejects_template_lineage_ownership(tmp_path):
+    report = tmp_path / "report.json"
+    write_json(report, {
+        "status": "passed_checks",
+        "scenario": {"template": "puma-platformer"},
+        "scenario_sha256": "scenario",
+        "source": {"sha256": "source"},
+    })
+    ledger = tmp_path / "template-ledger.json"
+    compile_template_ledger(report, ledger)
+    with pytest.raises(ValueError, match="does not own lineage"):
+        compile_scheduler_decision(ledger)
 
 
 def test_template_compiler_keeps_simulation_replay_and_regression_scopes_separate(tmp_path):
