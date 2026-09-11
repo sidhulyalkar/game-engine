@@ -47,14 +47,18 @@ def _repair_action(scope: str) -> EvidenceAction:
 
 
 def _failed_action(scope: str) -> EvidenceAction:
+    # v0.10 ledgers used `failed` for deterministic/browser/M4 findings that were
+    # already treated as bounded-repair candidates by the live tournament. Preserve
+    # that historical routing while v0.12 introduces explicit repair_required only
+    # for the newly modeled critic-resolution scope.
     if scope == "source_semantics":
-        return EvidenceAction("halt_source_rejection", scope, "deterministic source evidence is explicitly rejected", "none", terminal=True)
+        return EvidenceAction("repair_source_contract", scope, "deterministic source contract failed", "bounded_llm")
     if scope == "reference_browser":
-        return EvidenceAction("halt_reference_browser_rejection", scope, "candidate is explicitly rejected in the reference browser", "none", terminal=True)
+        return EvidenceAction("repair_reference_browser", scope, "candidate does not execute in the reference browser", "bounded_llm")
     if scope in {"causal_controls", "restart_integrity", "independent_pixels"}:
-        return EvidenceAction("halt_behavior_rejection", scope, f"causal gameplay capability is explicitly rejected: {scope}", "none", terminal=True)
+        return EvidenceAction("repair_behavior", scope, f"causal gameplay capability failed: {scope}", "bounded_llm")
     if scope == "cross_browser":
-        return EvidenceAction("halt_cross_browser_rejection", scope, "compatibility evidence explicitly rejects the candidate", "none", terminal=True)
+        return EvidenceAction("repair_cross_browser", scope, "behaviorally valid candidate is not portable across target browsers", "bounded_llm")
     if scope == "critic_quorum":
         return EvidenceAction("halt_critic_evidence_failure", scope, "critic evidence explicitly failed", "none", terminal=True)
     if scope == "critic_resolution":
@@ -102,8 +106,6 @@ def _missing_action(scope: str) -> EvidenceAction:
 
 def next_generated_action(ledger: EvidenceLedger) -> EvidenceAction:
     """Return exactly one cheapest legitimate next action for a generated game lineage."""
-    # Strong negative/repair evidence and incomplete measurements take precedence
-    # over missing later stages.
     for scope in _GENERATED_ORDER:
         state = ledger.state(scope)
         if state == "failed":
