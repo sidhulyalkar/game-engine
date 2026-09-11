@@ -36,6 +36,57 @@ def _candidate_evidence(run_root: Path):
     )
 
 
+def _candidate_audits(run_root: Path):
+    # The top-level audit may belong to an original or behavioral-repair lineage;
+    # resolve that from immutable build ledgers rather than from directory naming.
+    return (
+        ("a", run_root / "audit-a" / "audit-summary.json", ("generated-web", "behavioral-repair")),
+        ("b", run_root / "audit-b" / "audit-summary.json", ("generated-web", "behavioral-repair")),
+        (
+            "a",
+            run_root / "repair-cycle-a" / "audit" / "audit-summary.json",
+            ("critic-repair",),
+        ),
+        (
+            "b",
+            run_root / "repair-cycle-b" / "audit" / "audit-summary.json",
+            ("critic-repair",),
+        ),
+    )
+
+
+def _audit_build_ids(path: Path) -> list[str]:
+    payload = json.loads(path.read_text())
+    rows = [row for row in payload.get("ranking", []) if isinstance(row, dict)]
+    ids = [str(row.get("build_id") or "") for row in rows]
+    if not ids or any(not value for value in ids):
+        raise ValueError(f"critic audit has no complete build identities: {path}")
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"critic audit contains duplicate build identities: {path}")
+    return ids
+
+
+def _resolve_audit_lineage(
+    evidence_root: Path,
+    *,
+    race: str,
+    audit_path: Path,
+    candidate_lineages: tuple[str, ...],
+) -> str:
+    ids = _audit_build_ids(audit_path)
+    matching = []
+    for lineage in candidate_lineages:
+        root = evidence_root / "ledgers" / lineage / race
+        if all((root / f"{build_id}.json").exists() for build_id in ids):
+            matching.append(lineage)
+    if len(matching) != 1:
+        raise ValueError(
+            f"critic audit lineage must resolve uniquely for race={race}; "
+            f"builds={ids}; candidates={list(candidate_lineages)}; matches={matching}"
+        )
+    return matching[0]
+
+
 def observe_tournament_run(
     run_root: Path,
     *,
@@ -58,11 +109,13 @@ def observe_tournament_run(
     )
 
     observed: list[dict] = []
+    critic_observed: list[dict] = []
     skipped: list[dict] = []
     errors: list[dict] = []
     for race, lineage, path in _candidate_evidence(run_root):
         if not path.exists():
             skipped.append({
+                "kind": "staged_evidence",
                 "race": race,
                 "lineage": lineage,
                 "path": str(path),
@@ -91,14 +144,61 @@ def observe_tournament_run(
             })
         except Exception as exc:
             errors.append({
+                "kind": "staged_evidence",
                 "race": race,
                 "lineage": lineage,
                 "path": str(path),
                 "error": f"{type(exc).__name__}: {exc}",
             })
 
-    # Provider performance is descriptive even for partial runs. It must never make
-    # this shadow observer fail merely because a later tournament stage did not run.
+    # Critic artifacts are interpreted only after objective ledgers exist. A top-level
+    # audit can refer to either an original or behavioral-repair child; build identity
+    # must resolve that lineage uniquely rather than borrowing a sibling's verdict.
+    for race, audit_path, candidate_lineages in _candidate_audits(run_root):
+        if not audit_path.exists():
+            skipped.append({
+                "kind": "critic_audit",
+                "race": race,
+                "lineage_candidates": list(candidate_lineages),
+                "path": str(audit_path),
+                "reason": "artifact_not_present",
+            })
+            continue
+        try:
+            lineage = _resolve_audit_lineage(
+                evidence_root,
+                race=race,
+                audit_path=audit_path,
+                candidate_lineages=candidate_lineages,
+            )
+            summary = director.observe_critic_audit(
+                race=race,
+                lineage=lineage,
+                audit_summary_path=audit_path,
+            )
+            critic_observed.append({
+                "race": race,
+                "lineage": lineage,
+                "path": str(audit_path),
+                "subjects": sorted(summary["observations"]),
+                "scheduler_actions": {
+                    build_id: row["scheduler"]["action"]
+                    for build_id, row in sorted(summary["observations"].items())
+                },
+                "promotion_status": {
+                    build_id: row["promotion"]["status"]
+                    for build_id, row in sorted(summary["observations"].items())
+                },
+            })
+        except Exception as exc:
+            errors.append({
+                "kind": "critic_audit",
+                "race": race,
+                "lineage_candidates": list(candidate_lineages),
+                "path": str(audit_path),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+
     try:
         provider_shadow = director.compile_provider_shadow(run_root)
         provider_error = None
@@ -107,12 +207,13 @@ def observe_tournament_run(
         provider_error = f"{type(exc).__name__}: {exc}"
 
     payload = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "mode": "shadow",
         "routing_authority": False,
         "experiment_fingerprint": director.identity["experiment_fingerprint"],
         "run_root": str(run_root),
         "observed": observed,
+        "critic_observed": critic_observed,
         "skipped": skipped,
         "errors": errors,
         "provider_performance_written": provider_shadow is not None,
