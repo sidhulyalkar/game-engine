@@ -18,6 +18,7 @@ on:
       - main
       - agent/v0.1-swarm-foundry
       - agent/v0.9-unified-evidence
+      - agent/v0.11-evidence-directed-tournament
     paths:
       - '.github/workflows/autonomous-studio.yml'
       - 'studio.nvidia*.json'
@@ -81,6 +82,15 @@ jobs:
             --browsers chromium,firefox,webkit \
             --install-browsers-on-demand
 
+      - name: Compile evidence-directed shadow ledger
+        if: always()
+        run: |
+          python -m game_engine.evidence_shadow_cli "$RUN_ROOT" \
+            --brief "$BRIEF" \
+            --seed "$STUDIO_SEED" \
+            --browsers chromium firefox webkit \
+            --git-sha "$GITHUB_SHA"
+
       - name: Write Actions summary
         if: always()
         shell: bash
@@ -110,7 +120,15 @@ jobs:
             cat "$RUN_ROOT/failure.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f "$RUN_ROOT/evidence-directed/shadow-run-summary.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Evidence-directed shadow scheduler" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUN_ROOT/evidence-directed/shadow-run-summary.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Shadow scheduler and provider-performance artifacts have no routing authority in v0.11." >> "$GITHUB_STEP_SUMMARY"
           echo "Automated promotion remains blocked until player-facing preference/fun evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
