@@ -36,6 +36,11 @@ def _ledger_from_payload(payload: dict) -> EvidenceLedger:
     )
 
 
+def _jsonable(value):
+    """Canonicalize Python containers to the representation that JSON persists."""
+    return json.loads(json.dumps(value, sort_keys=True))
+
+
 def _canonical_digest(payload: dict) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(canonical).hexdigest()
@@ -116,8 +121,11 @@ class EvidenceDirectedDirector:
         observations: dict[str, dict] = {}
         for build_id, payload in sorted(rows.items()):
             ledger = _ledger_from_payload(payload)
-            promotion = asdict(evaluate_promotion(ledger, GENERATED_CRITIC_ELIGIBLE))
-            scheduler = asdict(next_generated_action(ledger))
+            # Canonicalize before hashing or equality checks. Dataclass tuples become
+            # JSON arrays on disk; comparing the pre-serialization object to a reread
+            # JSON row would otherwise create a false immutable-event conflict.
+            promotion = _jsonable(asdict(evaluate_promotion(ledger, GENERATED_CRITIC_ELIGIBLE)))
+            scheduler = _jsonable(asdict(next_generated_action(ledger)))
             base = {
                 "experiment_fingerprint": self.identity["experiment_fingerprint"],
                 "stage": "staged_evidence",
@@ -130,7 +138,7 @@ class EvidenceDirectedDirector:
             }
             event_key = f"staged_evidence:{lineage}:{race_key}:{build_id}"
             event_id = _canonical_digest({"event_key": event_key, **base})
-            event = asdict(ShadowEvidenceObservation(
+            event = _jsonable(asdict(ShadowEvidenceObservation(
                 event_key=event_key,
                 event_id=event_id,
                 experiment_fingerprint=base["experiment_fingerprint"],
@@ -141,7 +149,7 @@ class EvidenceDirectedDirector:
                 promotion=promotion,
                 scheduler=scheduler,
                 scope_states=base["scope_states"],
-            ))
+            )))
             self._append_event(event)
             observations[str(build_id)] = event
 
