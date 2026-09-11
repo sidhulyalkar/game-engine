@@ -69,6 +69,10 @@ jobs:
         run: |
           game-engine puma-timing-run examples/studies/puma-timing-plan.json fixtures/puma --out design-evidence/puma-timing
           game-engine puma-timing-analyze design-evidence/puma-timing
+      - name: Frozen Puma collision-world jump task
+        run: |
+          game-engine puma-jump-run examples/studies/puma-jump-plan.json fixtures/puma --out design-evidence/puma-jump
+          game-engine puma-jump-analyze design-evidence/puma-jump
       - uses: actions/upload-artifact@v4
         if: always()
         with:

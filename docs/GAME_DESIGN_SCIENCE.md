@@ -31,6 +31,10 @@ The next implemented sensitivity control is the [Puma timing calibration](PUMA_T
 200 real-motor trials under imposed contact conditions, with one grace window
 changed at a time. Its motor-only scope is separate from full level playtesting.
 
+The [collision-world gap task](PUMA_JUMP_TASK.md) now follows this control with
+actual GameSession landings, and defines the next experimental gates through
+human preference validation and generator feedback.
+
 ## Executable paired experiment
 
 Prepare two reviewed checkouts with one explicit intervention. Record the diff.

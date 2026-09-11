@@ -98,6 +98,13 @@ def cmd_propose(args):
 
 
 def register(sub):
+    p = sub.add_parser("puma-jump-plan", help="freeze an exploratory collision-world gap task")
+    p.add_argument("source"); p.add_argument("--out", required=True); p.set_defaults(func=cmd_jump_plan)
+    p = sub.add_parser("puma-jump-run", help="execute real GameSession gap trials")
+    p.add_argument("plan"); p.add_argument("source"); p.add_argument("--out", required=True)
+    p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_jump_run)
+    p = sub.add_parser("puma-jump-analyze", help="reconstruct far-platform landings from raw state")
+    p.add_argument("evidence"); p.set_defaults(func=cmd_jump_analyze)
     p = sub.add_parser("puma-timing-plan", help="freeze a motor timing positive-control protocol")
     p.add_argument("source"); p.add_argument("--out", required=True); p.set_defaults(func=cmd_timing_plan)
     p = sub.add_parser("puma-timing-run", help="measure imposed-contact jump timing in the actual Puma motor")
@@ -188,3 +195,23 @@ def cmd_timing_analyze(args):
     from .timing import verify_timing
     result = verify_timing(args.evidence)
     emit(result); return 0 if result["status"] == "passed" else 2
+
+
+def cmd_jump_plan(args):
+    from .jump_task import make_jump_plan
+    plan = make_jump_plan(args.source); write_new(args.out, plan)
+    emit({"plan": args.out, "plan_sha256": plan["plan_sha256"]}); return 0
+
+
+def cmd_jump_run(args):
+    from .jump_task import run_jump
+    result = run_jump(read(args.plan), args.source, args.out, args.timeout)
+    emit({k:v for k,v in result.items() if k != "outcomes"})
+    return 0 if result["status"] == "passed_controls" else 2
+
+
+def cmd_jump_analyze(args):
+    from .jump_task import verify_jump
+    result = verify_jump(args.evidence)
+    emit({k:v for k,v in result.items() if k != "outcomes"})
+    return 0 if result["status"] == "passed_controls" else 2
