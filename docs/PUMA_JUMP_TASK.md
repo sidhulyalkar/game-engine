@@ -56,6 +56,26 @@ trials, input drift, false target geometry, nonfinite states and edited summarie
 
 ## Highest-value continuation
 
+The [first real execution](https://github.com/sidhulyalkar/game-engine/actions/runs/34633618831)
+passed every validity control at commit `6e77bb8e0964d6baedf4908c60d048293f25b48b`.
+The [retained summary excerpt](evidence/puma-jump-first-result.json) links to all
+raw step records and per-trial outcomes in the CI artifact.
+
+| Gap width (game units) | Default successful offsets (ticks) | Narrow successful offsets (ticks) |
+| --- | --- | --- |
+| 2 | -1 through 13 | -1, 0 |
+| 4 | -1 through 13 | -1, 0 |
+| 6 | -1 through 13 | -1, 0 |
+| 8 | 9 through 13 | None |
+
+The wider window produced 44 additional successful paired conditions across
+the 104 gap/offset pairs. Repeats are excluded from that count. This is a result
+for the enumerated fixture and input schedule, not a human success-rate estimate.
+The eight-unit result is particularly useful: successful timing depends on gap
+geometry, so a universal acceptance-window score would miss task structure.
+Preserve these outcomes and use new layouts to test transfer before optimizing
+against this grid.
+
 | Stage | Deliverable | Advance only when |
 | --- | --- | --- |
 | Current | Motor control plus collision-world coyote experiment | Controls pass; original outcomes and failures are retained |

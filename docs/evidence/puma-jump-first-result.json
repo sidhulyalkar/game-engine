@@ -1,0 +1,168 @@
+{
+  "execution_commit": "6e77bb8e0964d6baedf4908c60d048293f25b48b",
+  "workflow_url": "https://github.com/sidhulyalkar/game-engine/actions/runs/34633618831",
+  "full_evidence_artifact": "https://github.com/sidhulyalkar/game-engine/actions/runs/34633618831/artifacts/10277731973",
+  "summary_excerpt": {
+    "control_failures": [],
+    "curves": [
+      {
+        "default_only_offsets": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "gap": 2,
+        "narrow_only_offsets": [],
+        "successful_offsets": {
+          "default": [
+            -1,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "narrow": [
+            -1,
+            0
+          ]
+        }
+      },
+      {
+        "default_only_offsets": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "gap": 4,
+        "narrow_only_offsets": [],
+        "successful_offsets": {
+          "default": [
+            -1,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "narrow": [
+            -1,
+            0
+          ]
+        }
+      },
+      {
+        "default_only_offsets": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "gap": 6,
+        "narrow_only_offsets": [],
+        "successful_offsets": {
+          "default": [
+            -1,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "narrow": [
+            -1,
+            0
+          ]
+        }
+      },
+      {
+        "default_only_offsets": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "gap": 8,
+        "narrow_only_offsets": [],
+        "successful_offsets": {
+          "default": [
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "narrow": []
+        }
+      }
+    ],
+    "generalizes_to_campaign": false,
+    "human_preference_measured": false,
+    "plan_sha256": "52a2be45f526b0368988968f9f5a75136df6c162eec47062f0feb60b7b337a3a",
+    "reference_runs": 4,
+    "rendering_measured": false,
+    "scope": "authored_gap_game_session",
+    "statistical_inference": "enumerated deterministic conditions; no population estimate",
+    "status": "passed_controls",
+    "trace_sha256": "97d1d6bd3a3547366c9f48e2ef2eda32e1303e2d9529b379252d3b8008fdd7f3",
+    "trial_count": 416,
+    "unique_conditions": 208
+  }
+}
