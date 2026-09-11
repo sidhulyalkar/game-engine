@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from .evidence_contract import (
+    EvidenceClaim,
     EvidenceLedger,
     claims_from_staged_evidence,
     claims_from_template_report,
@@ -11,6 +13,16 @@ from .evidence_contract import (
     replay_claim,
     write_ledger,
 )
+from .evidence_scheduler import next_generated_action
+
+
+def _ledger_from_payload(payload: dict) -> EvidenceLedger:
+    claims = [EvidenceClaim(**row) for row in payload.get("claims", [])]
+    return EvidenceLedger(
+        subject_id=str(payload["subject_id"]),
+        lineage=str(payload["lineage"]),
+        claims=claims,
+    )
 
 
 def compile_staged_ledgers(
@@ -36,6 +48,7 @@ def compile_staged_ledgers(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: dict[str, dict] = {}
+    decisions: dict[str, dict] = {}
     for build_id in sorted(ids):
         ledger = EvidenceLedger(
             subject_id=build_id,
@@ -47,15 +60,39 @@ def compile_staged_ledgers(
             ),
         )
         rows[build_id] = write_ledger(output_dir / f"{build_id}.json", ledger)
+        decisions[build_id] = asdict(next_generated_action(ledger))
 
     index = {
         "schema_version": "0.1",
         "lineage": lineage,
         "subjects": sorted(rows),
         "ledgers": {build_id: f"{build_id}.json" for build_id in sorted(rows)},
+        "shadow_scheduler_decisions": decisions,
+        "scheduler_mode": "shadow",
     }
     (output_dir / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     return rows
+
+
+def compile_scheduler_decision(
+    ledger_path: Path,
+    output_path: Path | None = None,
+) -> dict:
+    """Compile one inspectable next-action decision without executing it."""
+    ledger = _ledger_from_payload(json.loads(ledger_path.read_text()))
+    if ledger.lineage not in {"generated-web", "generated", "behavioral-repair", "critic-repair"}:
+        raise ValueError(f"generated scheduler does not own lineage {ledger.lineage!r}")
+    payload = {
+        "schema_version": "0.1",
+        "mode": "shadow",
+        "subject_id": ledger.subject_id,
+        "lineage": ledger.lineage,
+        "decision": asdict(next_generated_action(ledger)),
+    }
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def compile_template_ledger(
