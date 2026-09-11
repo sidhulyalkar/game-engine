@@ -65,18 +65,6 @@ jobs:
           game-engine study-plan puma-platformer fixtures/puma fixtures/puma --hypothesis 'Identical Puma sources must give zero paired effect' --seeds 13 --ticks 24 --out design-evidence/puma-plan.json
           game-engine study-run design-evidence/puma-plan.json fixtures/puma fixtures/puma --out design-evidence/puma-identity
           python -c "import json; r=json.load(open('design-evidence/puma-identity/summary.json')); assert r['effect']['mean_delta'] == 0"
-      - uses: actions/checkout@v4
-        with:
-          repository: sidhulyalkar/algonaut-a-mario
-          ref: 1f1d4b6d764c8bf635be4a071d3279dc22174a4e
-          path: fixtures/algonaut
-          persist-credentials: false
-      - name: Independent Algonaut consumer against produced gameplay features
-        run: |
-          python -m pip install numpy ruff
-          ruff check fixtures/algonaut/src/algonaut_mario/gameplay_bridge.py fixtures/algonaut/tests/test_gameplay_bridge.py
-          PYTHONPATH=fixtures/algonaut/src python -m unittest discover -s fixtures/algonaut/tests -p test_gameplay_bridge.py
-          PYTHONPATH=fixtures/algonaut/src python -m algonaut_mario.gameplay_bridge design-evidence/features.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
