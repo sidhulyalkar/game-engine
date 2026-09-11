@@ -58,3 +58,11 @@ jobs:
           name: template-playtest-evidence
           path: evidence
           if-no-files-found: warn
+      - name: Frozen paired design pilot and causal feature export
+        run: python scripts/qualify_game_design.py --unicorn fixtures/unicorn --out design-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: game-design-pilot-evidence
+          path: design-evidence
+          if-no-files-found: warn

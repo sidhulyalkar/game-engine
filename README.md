@@ -141,6 +141,11 @@ Each provider/role assignment runs independently and failure-isolated. The run r
 
 ## Template playtesting and repair
 
+The next layer adds preregistered paired source-variant studies (`study-plan`,
+`study-run`, `study-analyze`) and causal, target-free feature export
+(`playtest-features`) for an independent Algonaut-a-Mario consumer. See the
+[game-design science protocol and ten-week research plan](docs/GAME_DESIGN_SCIENCE.md).
+
 The studio now includes instrumented adapters for **Unicorn Stampede** (JavaScript)
 and **Puma: Wildbound** (the actual C# core used by Unity). It can record bounded
 input scenarios, verify deterministic replays, flag trace failures and stationary
