@@ -170,3 +170,9 @@ game-engine swarm-build runs/js13k-2026/winner.json \
 ```
 
 Each model receives the same brief and champion concept, returns a standalone `index.html`, and is isolated into its own build directory. The forge immediately creates a ZIP, checks the real compressed byte limit, records headroom/warnings/failures in `builds.json`, and never lets one broken model response erase the other contenders. This is intentionally a **prototype** gate: gameplay/browser evidence should decide which build survives next, not file size alone.
+
+## Puma timing calibration
+
+The [motor timing protocol](docs/PUMA_TIMING_CALIBRATION.md) tests sensitivity to
+coyote-time and jump-buffer changes with recorded C# motor events and frozen
+predictions. Run `game-engine puma-timing-run --help` for the execution command.

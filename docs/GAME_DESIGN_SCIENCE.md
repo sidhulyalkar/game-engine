@@ -27,6 +27,10 @@ Start with one factor and a two-arm comparison. Later factorial experiments can
 test interactions such as jump buffering × hazard speed. Do not add many factors
 before establishing sensitivity and measurement reliability.
 
+The next implemented sensitivity control is the [Puma timing calibration](PUMA_TIMING_CALIBRATION.md):
+200 real-motor trials under imposed contact conditions, with one grace window
+changed at a time. Its motor-only scope is separate from full level playtesting.
+
 ## Executable paired experiment
 
 Prepare two reviewed checkouts with one explicit intervention. Record the diff.

@@ -1,0 +1,1437 @@
+{
+  "plan": {
+    "version": 1,
+    "scope": "imposed_contact_motor_calibration",
+    "tick_hz": 120,
+    "hypothesis": "Shortening one grace window to half a tick reduces delayed jump acceptance while retaining on-time acceptance.",
+    "source": {
+      "files": {
+        "Assets/Wildbound/Core/Enemies.cs": "18ad16935503596ab3896a9ddf1b8a573c8428f247ba891928b5b92ef5c1e604",
+        "Assets/Wildbound/Core/Exploration.cs": "df06cc9b597bf27144e8f83e60aaef252499ba61e1b48d8d62b0428cbd93f2e0",
+        "Assets/Wildbound/Core/GameSession.cs": "a864a8574a1a418fe8b39a518e41f93c8bda46367f982e6003c1de5c557a7e25",
+        "Assets/Wildbound/Core/Geometry.cs": "dcf16e8796f3dd3b6ff80e2e36550241aa2f0c62e2299bfe7f7c671672f5990f",
+        "Assets/Wildbound/Core/Moontrail.cs": "6840827d520aaff978e0040da38943bc9782142886f0edef97a2c858bdb39e59",
+        "Assets/Wildbound/Core/Movement.cs": "2a25aca5bad0760518a54a53c64f971118e19e5f17c1a894351a95efce37b7e2",
+        "Assets/Wildbound/Core/PumaCombat.cs": "f66188480f6f6a373f81e07e7cbb4393bbda5737ece4eabf581c8c61845990c0",
+        "Assets/Wildbound/Core/WorldCollision.cs": "6da75e3c7521e15785bede56fd854eaec545e96afb69582eeaafb1607f1ba914",
+        "Assets/Wildbound/Core/WorldDefinition.cs": "b40e7b8a795b9601953682d47373776ea370243564efc07cc568c3d8fa060ef9",
+        "Assets/Wildbound/Core/WorldRegions.cs": "f6ad8d19007924376d9807cc61f7550ffac41b12e55a9388c454f50b35039a6d"
+      },
+      "sha256": "d8da6592710dd6f20e831324e817277c7865e0335c0c1a06e093edde7bca7564"
+    },
+    "implementation_sha256": "e80695ab65a133c76e38248d1b5a8a8b2ecbfea8ab7ad38fadda217895035bc5",
+    "schedule": [
+      {
+        "id": "coyote-default-14-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 14,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-2-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 2,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-15-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 15,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-19-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 19,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-6-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 6,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-17-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 17,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-14-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 14,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-20-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 20,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-0-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 0,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-13-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 13,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-14-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 14,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-12-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 12,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-14-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 14,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-6-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 6,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-12-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 12,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-2-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 2,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-22-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 22,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-5-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 5,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-24-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 24,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-5-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 5,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-19-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 19,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-22-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 22,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-6-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 6,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-7-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 7,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-23-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 23,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-11-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 11,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-21-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 21,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-20-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 20,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-9-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 9,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-15-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 15,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-4-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 4,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-8-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 8,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-21-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 21,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-18-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 18,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-23-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 23,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-24-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 24,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-4-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 4,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-1-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 1,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-9-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 9,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-1-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 1,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-2-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 2,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-4-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 4,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-0-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 0,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-7-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 7,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-17-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 17,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-3-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 3,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-1-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 1,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-7-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 7,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-21-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 21,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-13-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 13,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-18-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 18,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-12-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 12,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-2-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 2,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-22-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 22,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-5-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 5,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-17-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 17,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-23-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 23,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-11-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 11,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-6-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 6,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-20-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 20,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-7-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 7,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-21-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 21,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-0-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 0,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-10-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 10,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-18-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 18,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-0-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 0,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-11-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 11,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-0-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 0,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-24-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 24,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-18-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 18,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-1-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 1,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-8-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 8,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-7-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 7,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-22-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 22,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-20-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 20,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-21-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 21,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-14-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 14,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-10-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 10,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-8-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 8,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-16-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 16,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-19-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 19,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-2-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 2,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-6-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 6,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-19-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 19,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-5-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 5,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-6-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 6,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-16-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 16,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-12-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 12,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-17-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 17,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-19-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 19,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-24-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 24,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-15-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 15,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-10-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 10,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-12-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 12,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-17-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 17,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-24-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 24,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-13-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 13,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-19-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 19,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-21-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 21,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-11-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 11,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-16-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 16,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-20-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 20,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-17-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 17,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-5-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 5,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-15-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 15,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-5-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 5,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-24-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 24,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-2-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 2,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-6-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 6,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-13-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 13,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-4-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 4,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-5-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 5,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-2-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 2,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-16-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 16,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-7-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 7,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-18-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 18,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-11-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 11,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-23-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 23,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-15-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 15,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-21-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 21,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-4-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 4,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-0-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 0,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-23-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 23,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-8-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 8,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-0-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 0,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-3-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 3,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-21-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 21,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-16-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 16,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-15-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 15,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-3-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 3,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-11-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 11,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-10-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 10,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-13-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 13,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-14-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 14,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-4-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 4,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-2-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 2,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-10-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 10,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-12-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 12,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-13-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 13,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-3-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 3,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-14-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 14,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-23-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 23,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-9-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 9,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-9-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 9,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-18-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 18,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-11-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 11,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-22-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 22,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-24-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 24,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-3-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 3,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-17-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 17,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-12-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 12,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-17-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 17,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-8-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 8,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-10-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 10,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-16-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 16,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-7-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 7,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-24-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 24,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-15-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 15,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-3-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 3,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-15-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 15,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-22-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 22,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-9-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 9,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-20-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 20,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-23-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 23,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-8-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 8,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-0-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 0,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-3-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 3,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-19-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 19,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-18-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 18,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-20-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 20,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-4-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 4,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-14-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 14,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-4-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 4,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-16-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 16,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-22-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 22,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-7-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 7,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-8-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 8,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-13-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 13,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-18-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 18,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-9-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 9,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-6-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 6,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-9-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 9,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-3-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 3,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-12-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 12,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-11-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 11,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-10-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 10,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-22-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 22,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-1-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 1,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-narrow-19-1",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 19,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-narrow-20-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 20,
+        "repeat": 1
+      },
+      {
+        "id": "buffer-default-1-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 1,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-23-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 23,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-5-0",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 5,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-1-1",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 1,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-narrow-16-0",
+        "mechanism": "coyote",
+        "arm": "narrow",
+        "delay_ticks": 16,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-narrow-8-1",
+        "mechanism": "buffer",
+        "arm": "narrow",
+        "delay_ticks": 8,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-1-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 1,
+        "repeat": 1
+      },
+      {
+        "id": "coyote-default-10-0",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 10,
+        "repeat": 0
+      },
+      {
+        "id": "buffer-default-9-0",
+        "mechanism": "buffer",
+        "arm": "default",
+        "delay_ticks": 9,
+        "repeat": 0
+      },
+      {
+        "id": "coyote-default-13-1",
+        "mechanism": "coyote",
+        "arm": "default",
+        "delay_ticks": 13,
+        "repeat": 1
+      }
+    ],
+    "expected_last_accepted_tick": {
+      "coyote": {
+        "default": 13,
+        "narrow": 0
+      },
+      "buffer": {
+        "default": 15,
+        "narrow": 0
+      }
+    }
+  },
+  "plan_sha256": "6f8f5bf2ba8496cd67140fc340683afbd74dc2290e94d84a1d127f780323fe9e"
+}

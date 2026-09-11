@@ -98,6 +98,13 @@ def cmd_propose(args):
 
 
 def register(sub):
+    p = sub.add_parser("puma-timing-plan", help="freeze a motor timing positive-control protocol")
+    p.add_argument("source"); p.add_argument("--out", required=True); p.set_defaults(func=cmd_timing_plan)
+    p = sub.add_parser("puma-timing-run", help="measure imposed-contact jump timing in the actual Puma motor")
+    p.add_argument("plan"); p.add_argument("source"); p.add_argument("--out", required=True)
+    p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_timing_run)
+    p = sub.add_parser("puma-timing-analyze", help="independently reconstruct timing curves from motor events")
+    p.add_argument("evidence"); p.set_defaults(func=cmd_timing_analyze)
     p = sub.add_parser("study-plan", help="freeze a paired source-variant experiment before execution")
     p.add_argument("template", choices=["unicorn-stampede", "puma-platformer"])
     p.add_argument("baseline"); p.add_argument("candidate"); p.add_argument("--hypothesis", required=True)
@@ -162,3 +169,22 @@ def cmd_features(args):
     packet=export_features(Path(args.evidence),args.family)
     write_new(args.out,packet); emit({"packet":args.out,"packet_sha256":packet["packet_sha256"],"brain_alignment_ready":False})
     return 0
+
+
+def cmd_timing_plan(args):
+    from .timing import make_timing_plan
+    plan = make_timing_plan(args.source)
+    write_new(args.out, plan); emit({"plan": args.out, "plan_sha256": plan["plan_sha256"]})
+    return 0
+
+
+def cmd_timing_run(args):
+    from .timing import run_timing
+    result = run_timing(read(args.plan), args.source, args.out, args.timeout)
+    emit(result); return 0 if result["status"] == "passed" else 2
+
+
+def cmd_timing_analyze(args):
+    from .timing import verify_timing
+    result = verify_timing(args.evidence)
+    emit(result); return 0 if result["status"] == "passed" else 2
