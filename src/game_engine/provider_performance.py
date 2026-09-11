@@ -17,6 +17,18 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [row for row in payload if isinstance(row, dict)] if isinstance(payload, list) else []
 
 
+def _critic_rows(path: Path) -> list[dict[str, Any]]:
+    """Return actual critic attempts from aggregate or legacy flat audit artifacts."""
+    rows: list[dict[str, Any]] = []
+    for row in _rows(path):
+        nested = row.get("critic_audits")
+        if isinstance(nested, list):
+            rows.extend(item for item in nested if isinstance(item, dict))
+        elif "ok" in row and row.get("provider"):
+            rows.append(row)
+    return rows
+
+
 def _provider_record() -> dict[str, Any]:
     return {
         "ideation": {
@@ -51,6 +63,7 @@ def _provider_record() -> dict[str, Any]:
             "failures": 0,
             "serialization_recoveries": 0,
             "successful_recoveries": 0,
+            "model_ids": {},
         },
         "repairs": {
             "behavioral_attempts": 0,
@@ -78,7 +91,7 @@ def _build_provider_map(run_root: Path) -> dict[str, str]:
         for row in _rows(path):
             build_id = row.get("build_id")
             provider = row.get("provider")
-            if build_id and provider:
+            if build_id and provider and str(build_id) != "failed":
                 mapping[str(build_id)] = str(provider)
     return mapping
 
@@ -173,15 +186,15 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
     ):
         _record_staged_evidence(providers, build_provider, path)
 
-    # Independent critics. Model IDs are preserved separately in the audit artifact,
-    # but provider config names remain the stable routing key used elsewhere.
+    # Aggregate BuildAudit rows store the builder at top level and the actual critic
+    # providers in critic_audits[]. Flatten those nested attempts before attribution.
     for path in (
         run_root / "audit-a" / "audits.json",
         run_root / "audit-b" / "audits.json",
         run_root / "repair-cycle-a" / "audit" / "audits.json",
         run_root / "repair-cycle-b" / "audit" / "audits.json",
     ):
-        for row in _rows(path):
+        for row in _critic_rows(path):
             provider = str(row.get("provider") or "unknown")
             phase = providers[provider]["critics"]
             phase["calls"] += 1
@@ -189,6 +202,9 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
                 phase["successes"] += 1
             else:
                 phase["failures"] += 1
+            model_id = row.get("model_id")
+            if model_id:
+                _inc(phase["model_ids"], str(model_id))
             if row.get("recovery_attempted"):
                 phase["serialization_recoveries"] += 1
                 if row.get("ok"):
