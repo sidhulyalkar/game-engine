@@ -16,7 +16,7 @@ class EvidenceAction:
 
 
 # Ordered by cost and causal dependency. A later evaluator is never purchased while
-# an earlier capability is failed, incomplete, or unmeasured.
+# an earlier capability is failed, repair-required, incomplete, or unmeasured.
 _GENERATED_ORDER = (
     "source_semantics",
     "reference_browser",
@@ -25,21 +25,40 @@ _GENERATED_ORDER = (
     "independent_pixels",
     "cross_browser",
     "critic_quorum",
+    "critic_resolution",
     "human_fun",
 )
 
 
+def _repair_action(scope: str) -> EvidenceAction:
+    if scope == "source_semantics":
+        return EvidenceAction("repair_source_contract", scope, "deterministic source contract requires repair", "bounded_llm")
+    if scope == "reference_browser":
+        return EvidenceAction("repair_reference_browser", scope, "candidate requires reference-browser repair", "bounded_llm")
+    if scope in {"causal_controls", "restart_integrity", "independent_pixels"}:
+        return EvidenceAction("repair_behavior", scope, f"causal gameplay capability requires repair: {scope}", "bounded_llm")
+    if scope == "cross_browser":
+        return EvidenceAction("repair_cross_browser", scope, "behaviorally valid candidate requires portability repair", "bounded_llm")
+    if scope == "critic_resolution":
+        return EvidenceAction("repair_critic_findings", scope, "independent critic quorum requires bounded repair", "bounded_llm")
+    if scope == "human_fun":
+        return EvidenceAction("revise_after_player_feedback", scope, "player-facing evidence requests revision", "bounded_llm")
+    raise ValueError(f"unsupported repair-required scope: {scope}")
+
+
 def _failed_action(scope: str) -> EvidenceAction:
     if scope == "source_semantics":
-        return EvidenceAction("repair_source_contract", scope, "deterministic source contract failed", "bounded_llm")
+        return EvidenceAction("halt_source_rejection", scope, "deterministic source evidence is explicitly rejected", "none", terminal=True)
     if scope == "reference_browser":
-        return EvidenceAction("repair_reference_browser", scope, "candidate does not execute in the reference browser", "bounded_llm")
+        return EvidenceAction("halt_reference_browser_rejection", scope, "candidate is explicitly rejected in the reference browser", "none", terminal=True)
     if scope in {"causal_controls", "restart_integrity", "independent_pixels"}:
-        return EvidenceAction("repair_behavior", scope, f"causal gameplay capability failed: {scope}", "bounded_llm")
+        return EvidenceAction("halt_behavior_rejection", scope, f"causal gameplay capability is explicitly rejected: {scope}", "none", terminal=True)
     if scope == "cross_browser":
-        return EvidenceAction("repair_cross_browser", scope, "behaviorally valid candidate is not portable across target browsers", "bounded_llm")
+        return EvidenceAction("halt_cross_browser_rejection", scope, "compatibility evidence explicitly rejects the candidate", "none", terminal=True)
     if scope == "critic_quorum":
-        return EvidenceAction("halt_critic_rejection", scope, "independent critic evidence explicitly failed", "none", terminal=True)
+        return EvidenceAction("halt_critic_evidence_failure", scope, "critic evidence explicitly failed", "none", terminal=True)
+    if scope == "critic_resolution":
+        return EvidenceAction("halt_critic_rejection", scope, "independent critic quorum rejects the candidate", "none", terminal=True)
     if scope == "human_fun":
         return EvidenceAction("halt_player_rejection", scope, "player-facing evidence rejected the candidate", "none", terminal=True)
     raise ValueError(f"unsupported failed scope: {scope}")
@@ -56,6 +75,8 @@ def _incomplete_action(scope: str) -> EvidenceAction:
         return EvidenceAction("rerun_cross_browser", scope, "compatibility evidence is incomplete", "browser_promotion")
     if scope == "critic_quorum":
         return EvidenceAction("rerun_independent_critics", scope, "critic quorum is incomplete", "llm_critics")
+    if scope == "critic_resolution":
+        return EvidenceAction("rerun_independent_critics", scope, "critic verdict is incomplete or unrecognized", "llm_critics")
     if scope == "human_fun":
         return EvidenceAction("collect_human_playtest", scope, "player-facing preference evidence is incomplete", "human")
     raise ValueError(f"unsupported incomplete scope: {scope}")
@@ -72,6 +93,8 @@ def _missing_action(scope: str) -> EvidenceAction:
         return EvidenceAction("run_cross_browser", scope, "behaviorally qualified candidate has not earned compatibility evidence", "browser_promotion")
     if scope == "critic_quorum":
         return EvidenceAction("run_independent_critics", scope, "objective evidence is complete; subjective critic quorum is next", "llm_critics")
+    if scope == "critic_resolution":
+        return EvidenceAction("materialize_critic_resolution", scope, "critic quorum exists but its verdict has not been represented in the ledger", "deterministic")
     if scope == "human_fun":
         return EvidenceAction("collect_human_playtest", scope, "automated evidence is complete; human preference remains unmeasured", "human")
     raise ValueError(f"unsupported missing scope: {scope}")
@@ -79,11 +102,14 @@ def _missing_action(scope: str) -> EvidenceAction:
 
 def next_generated_action(ledger: EvidenceLedger) -> EvidenceAction:
     """Return exactly one cheapest legitimate next action for a generated game lineage."""
-    # Failures and incomplete measurements take precedence over missing later stages.
+    # Strong negative/repair evidence and incomplete measurements take precedence
+    # over missing later stages.
     for scope in _GENERATED_ORDER:
         state = ledger.state(scope)
         if state == "failed":
             return _failed_action(scope)
+        if state == "repair_required":
+            return _repair_action(scope)
         if state == "incomplete":
             return _incomplete_action(scope)
         if state == "not_evaluated":
@@ -93,13 +119,11 @@ def next_generated_action(ledger: EvidenceLedger) -> EvidenceAction:
         return EvidenceAction(
             "promotion_eligible",
             None,
-            "all automated, critic, and player-facing evidence scopes are qualified",
+            "all automated, critic-resolution, and player-facing evidence scopes are qualified",
             "none",
             terminal=True,
         )
 
-    # This should be unreachable because FINAL_PLAYER_PROMOTION is the generated
-    # evidence order, but fail closed if policies diverge in a future refactor.
     missing = [scope for scope in GENERATED_CRITIC_ELIGIBLE if ledger.state(scope) != "qualified"]
     return EvidenceAction(
         "halt_policy_inconsistency",
