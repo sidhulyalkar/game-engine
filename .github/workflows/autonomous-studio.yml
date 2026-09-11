@@ -19,7 +19,7 @@ on:
       - agent/v0.1-swarm-foundry
     paths:
       - '.github/workflows/autonomous-studio.yml'
-      - 'studio.nvidia.json'
+      - 'studio.nvidia*.json'
       - 'examples/briefs/**'
       - 'src/game_engine/**'
       - 'tests/**'
@@ -30,17 +30,18 @@ permissions:
 
 concurrency:
   group: autonomous-nvidia-studio-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   tournament:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 100
     env:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRIEF: ${{ github.event.inputs.brief || 'examples/briefs/js13k-2026.json' }}
       STUDIO_SEED: ${{ github.event.inputs.seed || github.run_number }}
       RUN_ROOT: runs/autonomous
+      PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -49,97 +50,35 @@ jobs:
           python-version: '3.12'
 
       - name: Install studio
-        run: python -m pip install -e . pytest
+        run: python -m pip install -e '.[reality]' pytest
 
-      - name: Validate secret and configuration
+      - name: Validate secret and configuration files
         shell: bash
         run: |
           if [ -z "${NVIDIA_API_KEY:-}" ]; then
-            echo "::error::Repository Actions secret NVIDIA_API_KEY is not available to this workflow."
+            echo "::error::Repository Actions secret NVIDIA_API_KEY is not available."
             exit 2
           fi
           test -f "$BRIEF"
-          test -f studio.nvidia.json
-          python - <<'PY'
-          from pathlib import Path
-          from game_engine.config import load_provider_specs
-          specs = load_provider_specs(Path('studio.nvidia.json'))
-          assert len(specs) >= 3, 'autonomous roster must contain at least three enabled providers'
-          assert len({s.model for s in specs}) >= 3, 'autonomous roster must be model-diverse'
-          print('configured models:', ', '.join(s.model for s in specs))
-          PY
+          for cfg in studio.nvidia.json studio.nvidia.rescue.json studio.nvidia.build.json studio.nvidia.audit.json studio.nvidia.repair.json; do
+            test -f "$cfg"
+          done
 
       - name: Unit and contract tests
         run: pytest -q
 
-      - name: Deterministic exploration baseline
+      - name: Run evidence-gated autonomous tournament
         run: |
-          mkdir -p "$RUN_ROOT"
-          game-engine ideate "$BRIEF" \
-            --out "$RUN_ROOT/deterministic" \
+          game-engine autonomous-tournament "$BRIEF" \
+            --out "$RUN_ROOT" \
             --seed "$STUDIO_SEED" \
-            --concepts 32
-
-      - name: NVIDIA heterogeneous swarm ideation
-        run: |
-          game-engine swarm-ideate "$BRIEF" \
-            --providers studio.nvidia.json \
-            --out "$RUN_ROOT/swarm" \
-            --seed "$STUDIO_SEED" \
-            --seeds 24 \
-            --per-call 3 \
-            --workers 6
-
-      - name: Qualify swarm health
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('runs/autonomous/swarm')
-          manifest = json.loads((root / 'manifest.json').read_text())
-          providers = manifest.get('successful_providers', [])
-          successes = int(manifest.get('successful_assignments', 0))
-          population = int(manifest.get('population_size', 0))
-          if len(providers) < 2:
-              raise SystemExit(f'need >=2 successful model providers, got {providers}')
-          if successes < 6:
-              raise SystemExit(f'need >=6 successful specialist assignments, got {successes}')
-          if population <= 24:
-              raise SystemExit(f'LLM swarm added no qualified concepts; population={population}')
-          if not (root / 'winner.json').exists():
-              raise SystemExit('winner.json missing')
-          print(f'swarm qualified: providers={len(providers)} assignments={successes} population={population}')
-          PY
-
-      - name: Multi-model prototype race
-        run: |
-          game-engine swarm-build "$RUN_ROOT/swarm/winner.json" \
-            --providers studio.nvidia.json \
-            --out "$RUN_ROOT/builds" \
-            --workers 3
-
-      - name: Qualify prototype race
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          results = json.loads(Path('runs/autonomous/builds/builds.json').read_text())
-          good = [r for r in results if r.get('ok')]
-          if not good:
-              errors = [r.get('error') for r in results]
-              raise SystemExit(f'no runnable byte-qualified prototype survived: {errors}')
-          winner = json.loads(Path('runs/autonomous/swarm/winner.json').read_text())
-          summary = {
-              'concept': winner['concept']['title'],
-              'concept_id': winner['concept']['concept_id'],
-              'prototype_survivors': len(good),
-              'smallest_survivor_bytes': min(r['compressed_bytes'] for r in good),
-              'largest_headroom_bytes': max(r['byte_headroom'] for r in good),
-              'promotion_blocked_until_browser_reality_lab': True,
-          }
-          Path('runs/autonomous/run-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-          print(json.dumps(summary, indent=2))
-          PY
+            --primary-providers studio.nvidia.json \
+            --rescue-providers studio.nvidia.rescue.json \
+            --build-providers studio.nvidia.build.json \
+            --audit-providers studio.nvidia.audit.json \
+            --repair-providers studio.nvidia.repair.json \
+            --browsers chromium,firefox,webkit \
+            --install-browsers-on-demand
 
       - name: Write Actions summary
         if: always()
@@ -150,14 +89,28 @@ jobs:
           echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Seed: \`${STUDIO_SEED}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Brief: \`${BRIEF}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUN_ROOT/stage-journal.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Stage journal" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUN_ROOT/stage-journal.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$RUN_ROOT/run-summary.json" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Qualified run summary" >> "$GITHUB_STEP_SUMMARY"
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
             cat "$RUN_ROOT/run-summary.json" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$RUN_ROOT/failure.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Fail-closed evidence" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUN_ROOT/failure.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Promotion remains blocked until browser/playtest evidence is implemented." >> "$GITHUB_STEP_SUMMARY"
+          echo "Final promotion remains blocked until behavioral and player-facing evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
         if: always()

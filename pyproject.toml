@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "game-engine-swarm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evolutionary swarm studio for designing tiny web games, starting with js13kGames."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Sidharth Hulyalkar"}]
 dependencies = []
+
+[project.optional-dependencies]
+reality = ["playwright>=1.50"]
 
 [project.scripts]
 game-engine = "game_engine.cli:main"

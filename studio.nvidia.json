@@ -8,9 +8,10 @@
       "roles": ["wild_inventor", "byte_architect", "adversarial_designer", "webxr_specialist"],
       "temperature": 1.0,
       "top_p": 0.95,
-      "max_tokens": 8192,
-      "timeout": 240,
-      "retries": 3,
+      "max_tokens": 6144,
+      "timeout": 180,
+      "retries": 1,
+      "max_concurrency": 2,
       "enabled": true
     },
     {
@@ -21,9 +22,15 @@
       "roles": ["gameplay_director", "competition_judge", "online_specialist", "desktop_specialist"],
       "temperature": 0.8,
       "top_p": 0.95,
-      "max_tokens": 8192,
-      "timeout": 240,
-      "retries": 3,
+      "max_tokens": 4096,
+      "timeout": 120,
+      "retries": 0,
+      "max_concurrency": 2,
+      "extra_body": {
+        "chat_template_kwargs": {
+          "thinking": false
+        }
+      },
       "enabled": true
     },
     {
@@ -32,11 +39,12 @@
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
       "roles": ["visual_director", "audio_director", "onboarding_critic", "mobile_specialist"],
-      "temperature": 0.95,
-      "top_p": 0.95,
-      "max_tokens": 8192,
-      "timeout": 240,
-      "retries": 3,
+      "temperature": 1.0,
+      "top_p": null,
+      "max_tokens": 3072,
+      "timeout": 120,
+      "retries": 0,
+      "max_concurrency": 1,
       "enabled": true
     }
   ]

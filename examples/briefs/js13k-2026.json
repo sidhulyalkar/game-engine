@@ -1,6 +1,9 @@
 {
   "theme": "Unicorns and Rainbows",
   "target_categories": ["desktop", "mobile", "online", "webxr"],
+  "primary_category": "desktop",
+  "expansion_categories": ["mobile", "online", "webxr"],
+  "native_hybrid": false,
   "size_limit_bytes": 13312,
   "desired_session_seconds": 240,
   "audience": "js13kGames players and judges who reward novelty, game feel, clarity, and technical elegance",
@@ -19,5 +22,5 @@
     "more than three primary actions",
     "large shipped media assets"
   ],
-  "creative_direction": "cute at first glance, mechanically surprising underneath; use unicorn/rainbow ideas as physics or state, not wallpaper"
+  "creative_direction": "cute at first glance, mechanically surprising underneath; prove one excellent desktop interaction first, then branch successful lineages into mobile, online, and WebXR adaptations"
 }
