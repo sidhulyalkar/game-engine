@@ -80,7 +80,12 @@ class EvidenceLedger:
 
 
 def claims_from_staged_evidence(payload: dict, build_id: str, artifact: str | None = None) -> list[EvidenceClaim]:
-    """Translate generated-web-game evidence without granting unmeasured capabilities."""
+    """Translate generated-web-game evidence without granting unmeasured capabilities.
+
+    Historical staged-funnel failures retain their v0.10 `failed` representation for
+    artifact compatibility. The new `repair_required` state is introduced first at
+    critic resolution, where quorum, repair, and rejection were previously conflated.
+    """
     build_id = str(build_id)
     source = "staged_web_evidence"
     claims: list[EvidenceClaim] = []
@@ -106,7 +111,7 @@ def claims_from_staged_evidence(payload: dict, build_id: str, artifact: str | No
             claims.append(EvidenceClaim(scope, "qualified", source, artifact))
     elif build_id in repair:
         for scope in ("causal_controls", "restart_integrity", "independent_pixels"):
-            claims.append(EvidenceClaim(scope, "repair_required", source, artifact, "behavioral repair required"))
+            claims.append(EvidenceClaim(scope, "failed", source, artifact, "behavioral repair required"))
     elif build_id in insufficient:
         for scope in ("causal_controls", "restart_integrity", "independent_pixels"):
             claims.append(EvidenceClaim(scope, "incomplete", source, artifact))
@@ -114,7 +119,7 @@ def claims_from_staged_evidence(payload: dict, build_id: str, artifact: str | No
     if build_id in cross:
         claims.append(EvidenceClaim("cross_browser", "qualified", source, artifact))
     elif payload.get("promotion_attempted") and build_id in behavioral:
-        claims.append(EvidenceClaim("cross_browser", "repair_required", source, artifact, "cross-browser repair required"))
+        claims.append(EvidenceClaim("cross_browser", "failed", source, artifact))
 
     return claims
 
