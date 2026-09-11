@@ -1,0 +1,75 @@
+{
+  "curves": [
+    {
+      "accepted_delay_ticks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "arm": "default",
+      "last_accepted_ms": 108.33333333333334,
+      "mechanism": "coyote"
+    },
+    {
+      "accepted_delay_ticks": [
+        0
+      ],
+      "arm": "narrow",
+      "last_accepted_ms": 0,
+      "mechanism": "coyote"
+    },
+    {
+      "accepted_delay_ticks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "arm": "default",
+      "last_accepted_ms": 125,
+      "mechanism": "buffer"
+    },
+    {
+      "accepted_delay_ticks": [
+        0
+      ],
+      "arm": "narrow",
+      "last_accepted_ms": 0,
+      "mechanism": "buffer"
+    }
+  ],
+  "human_preference_measured": false,
+  "identity_repeats": 2,
+  "level_physics_measured": false,
+  "mismatches": [],
+  "neural_targets_measured": false,
+  "plan_sha256": "6f8f5bf2ba8496cd67140fc340683afbd74dc2290e94d84a1d127f780323fe9e",
+  "scope": "imposed_contact_motor_calibration",
+  "status": "passed",
+  "trace_sha256": "8874e3701bde0da2aa0ea9f61e3e83842f1fdd377f3f8e8082b381ee4791ad9b",
+  "trial_count": 200,
+  "unique_conditions": 100
+}

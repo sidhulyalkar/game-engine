@@ -41,12 +41,29 @@ At this call boundary, the frozen mechanistic predictions are:
 - Both repeat traces are identical, including measured vertical velocity.
 - All other offsets produce no jump event. No jump occurs before the final step.
 
-These are predictions made by reading the source, not yet measured outcomes.
+These predictions were frozen by reading the source before executing the sweep.
 A pass establishes sensitivity to known motor behavior under this fixture.
 It is not independent discovery of a new game-design principle. No confidence
 interval or p-value is attached to enumerated deterministic conditions; identity
 repeats are not independent players. Observed boundaries are quantized by the
 8.33 ms timestep, and cannot measure continuous human response times.
+
+## First measured result
+
+The [first CI execution](https://github.com/sidhulyalkar/game-engine/actions/runs/34627042077)
+at commit `0134e027f51eb48d8b45d62fd22de4a9f903e84e` passed all 200 trials,
+with no prediction or identity-repeat mismatches. Its [measured summary](evidence/puma-timing-calibration.json)
+retains the plan and trace fingerprints. Full step records are in that run's
+`game-design-pilot-evidence` artifact.
+
+| Window | Default: last accepted sampled offset | Narrow: accepted sampled offsets |
+| --- | --- | --- |
+| Coyote time | 13 ticks / 108.33 ms after leaving imposed ground | On-time only |
+| Jump buffering | 15 ticks / 125 ms before imposed landing | On-time only |
+
+This establishes the anticipated motor sensitivity at 120 Hz. It does not
+establish that the same numerical tolerance is visible through collision,
+rendering or human input, nor that wider windows improve player preference.
 
 ## Reproduce and inspect
 
