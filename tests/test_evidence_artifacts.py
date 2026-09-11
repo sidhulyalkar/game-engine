@@ -34,7 +34,8 @@ def test_staged_compiler_preserves_distinct_build_capabilities(tmp_path):
     assert rows["blocked"]["scope_states"]["reference_browser"] == "not_evaluated"
 
     assert rows["dead"]["scope_states"]["causal_controls"] == "failed"
-    assert rows["dead"]["scope_states"]["cross_browser"] == "failed"
+    # The dead build was stopped at M4, so compatibility promotion never ran.
+    assert rows["dead"]["scope_states"]["cross_browser"] == "not_evaluated"
 
     assert rows["gap"]["scope_states"]["causal_controls"] == "incomplete"
     assert rows["gap"]["scope_states"]["cross_browser"] == "not_evaluated"
@@ -76,7 +77,7 @@ def test_template_compiler_keeps_simulation_replay_and_regression_scopes_separat
     assert states["reference_browser"] == "not_evaluated"
     assert states["cross_browser"] == "not_evaluated"
     assert states["human_fun"] == "not_evaluated"
-    assert payload["subject_id"].startswith("unicorn-stampede:source123456789:scenario1234567")
+    assert payload["subject_id"] == "unicorn-stampede:source1234567890:scenario12345678"
 
 
 def test_template_replay_mismatch_is_explicit_failure(tmp_path):
