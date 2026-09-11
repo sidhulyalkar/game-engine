@@ -11,6 +11,7 @@ def write_json(path, payload):
 
 
 def make_configs(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     rows = {}
     for name in ("primary", "rescue", "build", "audit", "repair"):
         path = tmp_path / f"{name}.json"
@@ -20,6 +21,7 @@ def make_configs(tmp_path):
 
 
 def make_brief(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "brief.json"
     path.write_text(json.dumps({"title": "fixture"}) + "\n")
     return path
