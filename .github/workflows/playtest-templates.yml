@@ -58,3 +58,24 @@ jobs:
           name: template-playtest-evidence
           path: evidence
           if-no-files-found: warn
+      - name: Frozen paired design pilot and causal feature export
+        run: python scripts/qualify_game_design.py --unicorn fixtures/unicorn --out design-evidence
+      - name: Puma paired identity control
+        run: |
+          game-engine study-plan puma-platformer fixtures/puma fixtures/puma --hypothesis 'Identical Puma sources must give zero paired effect' --seeds 13 --ticks 24 --out design-evidence/puma-plan.json
+          game-engine study-run design-evidence/puma-plan.json fixtures/puma fixtures/puma --out design-evidence/puma-identity
+          python -c "import json; r=json.load(open('design-evidence/puma-identity/summary.json')); assert r['effect']['mean_delta'] == 0"
+      - name: Frozen Puma motor timing positive control
+        run: |
+          game-engine puma-timing-run examples/studies/puma-timing-plan.json fixtures/puma --out design-evidence/puma-timing
+          game-engine puma-timing-analyze design-evidence/puma-timing
+      - name: Frozen Puma collision-world jump task
+        run: |
+          game-engine puma-jump-run examples/studies/puma-jump-plan.json fixtures/puma --out design-evidence/puma-jump
+          game-engine puma-jump-analyze design-evidence/puma-jump
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: game-design-pilot-evidence
+          path: design-evidence
+          if-no-files-found: warn

@@ -141,6 +141,11 @@ Each provider/role assignment runs independently and failure-isolated. The run r
 
 ## Template playtesting and repair
 
+The next layer adds preregistered paired source-variant studies (`study-plan`,
+`study-run`, `study-analyze`) and causal, target-free feature export
+(`playtest-features`) for an independent Algonaut-a-Mario consumer. See the
+[game-design science protocol and ten-week research plan](docs/GAME_DESIGN_SCIENCE.md).
+
 The studio now includes instrumented adapters for **Unicorn Stampede** (JavaScript)
 and **Puma: Wildbound** (the actual C# core used by Unity). It can record bounded
 input scenarios, verify deterministic replays, flag trace failures and stationary
@@ -165,3 +170,9 @@ game-engine swarm-build runs/js13k-2026/winner.json \
 ```
 
 Each model receives the same brief and champion concept, returns a standalone `index.html`, and is isolated into its own build directory. The forge immediately creates a ZIP, checks the real compressed byte limit, records headroom/warnings/failures in `builds.json`, and never lets one broken model response erase the other contenders. This is intentionally a **prototype** gate: gameplay/browser evidence should decide which build survives next, not file size alone.
+
+## Puma timing calibration
+
+The [motor timing protocol](docs/PUMA_TIMING_CALIBRATION.md) tests sensitivity to
+coyote-time and jump-buffer changes with recorded C# motor events and frozen
+predictions. Run `game-engine puma-timing-run --help` for the execution command.

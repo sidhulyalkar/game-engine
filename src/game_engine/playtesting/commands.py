@@ -98,6 +98,35 @@ def cmd_propose(args):
 
 
 def register(sub):
+    p = sub.add_parser("puma-jump-plan", help="freeze an exploratory collision-world gap task")
+    p.add_argument("source"); p.add_argument("--out", required=True); p.set_defaults(func=cmd_jump_plan)
+    p = sub.add_parser("puma-jump-run", help="execute real GameSession gap trials")
+    p.add_argument("plan"); p.add_argument("source"); p.add_argument("--out", required=True)
+    p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_jump_run)
+    p = sub.add_parser("puma-jump-analyze", help="reconstruct far-platform landings from raw state")
+    p.add_argument("evidence"); p.set_defaults(func=cmd_jump_analyze)
+    p = sub.add_parser("puma-timing-plan", help="freeze a motor timing positive-control protocol")
+    p.add_argument("source"); p.add_argument("--out", required=True); p.set_defaults(func=cmd_timing_plan)
+    p = sub.add_parser("puma-timing-run", help="measure imposed-contact jump timing in the actual Puma motor")
+    p.add_argument("plan"); p.add_argument("source"); p.add_argument("--out", required=True)
+    p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_timing_run)
+    p = sub.add_parser("puma-timing-analyze", help="independently reconstruct timing curves from motor events")
+    p.add_argument("evidence"); p.set_defaults(func=cmd_timing_analyze)
+    p = sub.add_parser("study-plan", help="freeze a paired source-variant experiment before execution")
+    p.add_argument("template", choices=["unicorn-stampede", "puma-platformer"])
+    p.add_argument("baseline"); p.add_argument("candidate"); p.add_argument("--hypothesis", required=True)
+    p.add_argument("--seeds", type=int, nargs="+", default=[11,23,37,51,67])
+    p.add_argument("--ticks", type=int, default=1200)
+    p.add_argument("--endpoint", choices=["final_progress","deaths"], default="final_progress")
+    p.add_argument("--out",required=True); p.set_defaults(func=cmd_study_plan)
+    p = sub.add_parser("study-run", help="execute every paired block from a frozen plan")
+    p.add_argument("plan"); p.add_argument("baseline"); p.add_argument("candidate")
+    p.add_argument("--timeout",type=int,default=60); p.add_argument("--out",required=True); p.set_defaults(func=cmd_study_run)
+    p = sub.add_parser("study-analyze", help="reconstruct paired outcomes and seed-cluster uncertainty")
+    p.add_argument("study"); p.set_defaults(func=cmd_study_analyze)
+    p = sub.add_parser("playtest-features", help="export target-free causal features for the Algonaut bridge")
+    p.add_argument("evidence"); p.add_argument("--family",required=True); p.add_argument("--out",required=True)
+    p.set_defaults(func=cmd_features)
     p = sub.add_parser("playtest", help="run a bounded scenario against a trusted template checkout")
     p.add_argument("source"); p.add_argument("scenario"); p.add_argument("--out", required=True)
     p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_run)
@@ -116,3 +145,73 @@ def register(sub):
     p = sub.add_parser("playtest-apply", help="apply bounded edits to a separate candidate and retest")
     p.add_argument("source"); p.add_argument("baseline"); p.add_argument("proposal"); p.add_argument("--out", required=True)
     p.add_argument("--timeout", type=int, default=60); p.set_defaults(func=cmd_apply)
+
+
+def write_new(path, value):
+    p = Path(path); p.parent.mkdir(parents=True,exist_ok=True)
+    with p.open("x") as stream: json.dump(value,stream,indent=2,allow_nan=False); stream.write("\n")
+
+
+def cmd_study_plan(args):
+    from .experiments import make_plan
+    result=make_plan(args.template,Path(args.baseline),Path(args.candidate),args.hypothesis,args.seeds,args.ticks,args.endpoint)
+    write_new(args.out,result); emit({"plan":args.out,"plan_sha256":result["plan_sha256"],"scheduled_runs":len(result["plan"]["schedule"])})
+    return 0
+
+
+def cmd_study_run(args):
+    from .experiments import run_plan
+    result=run_plan(read(args.plan),Path(args.baseline),Path(args.candidate),Path(args.out),args.timeout)
+    emit(result); return 0 if result["status"]=="complete" else 2
+
+
+def cmd_study_analyze(args):
+    from .experiments import summarize
+    result=summarize(Path(args.study)); emit(result)
+    return 0 if result["status"]=="complete" else 2
+
+
+def cmd_features(args):
+    from .features import export_features
+    packet=export_features(Path(args.evidence),args.family)
+    write_new(args.out,packet); emit({"packet":args.out,"packet_sha256":packet["packet_sha256"],"brain_alignment_ready":False})
+    return 0
+
+
+def cmd_timing_plan(args):
+    from .timing import make_timing_plan
+    plan = make_timing_plan(args.source)
+    write_new(args.out, plan); emit({"plan": args.out, "plan_sha256": plan["plan_sha256"]})
+    return 0
+
+
+def cmd_timing_run(args):
+    from .timing import run_timing
+    result = run_timing(read(args.plan), args.source, args.out, args.timeout)
+    emit(result); return 0 if result["status"] == "passed" else 2
+
+
+def cmd_timing_analyze(args):
+    from .timing import verify_timing
+    result = verify_timing(args.evidence)
+    emit(result); return 0 if result["status"] == "passed" else 2
+
+
+def cmd_jump_plan(args):
+    from .jump_task import make_jump_plan
+    plan = make_jump_plan(args.source); write_new(args.out, plan)
+    emit({"plan": args.out, "plan_sha256": plan["plan_sha256"]}); return 0
+
+
+def cmd_jump_run(args):
+    from .jump_task import run_jump
+    result = run_jump(read(args.plan), args.source, args.out, args.timeout)
+    emit({k:v for k,v in result.items() if k != "outcomes"})
+    return 0 if result["status"] == "passed_controls" else 2
+
+
+def cmd_jump_analyze(args):
+    from .jump_task import verify_jump
+    result = verify_jump(args.evidence)
+    emit({k:v for k,v in result.items() if k != "outcomes"})
+    return 0 if result["status"] == "passed_controls" else 2

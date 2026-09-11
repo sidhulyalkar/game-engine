@@ -4,6 +4,7 @@ import json
 from pathlib import Path, PurePosixPath
 
 from .runner import compare, run, source_manifest
+from .analysis import analyze
 from .scenario import digest
 
 
@@ -13,8 +14,14 @@ def load_evidence(folder: Path) -> dict:
         raise ValueError("A repair needs a completed baseline run")
     if digest(report["scenario"]) != report["scenario_sha256"]:
         raise ValueError("Scenario fingerprint mismatch")
-    if digest(json.loads((folder/"trace.json").read_text())) != report["trace_sha256"]:
+    trace = json.loads((folder/"trace.json").read_text())
+    if digest(trace) != report["trace_sha256"]:
         raise ValueError("Trace fingerprint mismatch")
+    reconstructed = analyze(trace, report["scenario"])
+    if any(report.get(key) != value for key, value in reconstructed.items()):
+        raise ValueError("Reported measurements differ from the recorded trace")
+    if digest(report["source"]["files"]) != report["source"]["sha256"]:
+        raise ValueError("Source manifest fingerprint mismatch")
     return report
 
 

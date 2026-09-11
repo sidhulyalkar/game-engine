@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "plan_sha256": "ee92a483d8a9a788f3ce391cf5c747f81fe8076e4abfc8c060c930bc2e8be771",
+  "hypothesis": "Reducing Bolt speed multiplier from 1.14 to 1.00 changes final structure-damage progress under fixed seeded stress inputs. This is a controller sensitivity experiment, not a human preference test.",
+  "primary_endpoint": "final_progress",
+  "scope": "instrumented_controller_experiment_not_human_or_neural",
+  "errors": [],
+  "status": "complete",
+  "optimal_design_established": false,
+  "contract_failures": {
+    "baseline": [],
+    "candidate": []
+  },
+  "promotion_decision": "human_review_required",
+  "pairs": [
+    {
+      "block": "e292a4fa15c304e3",
+      "seed": 11,
+      "world": 0,
+      "delta": 0.16307908733230544
+    },
+    {
+      "block": "5ed7bb1d784971f8",
+      "seed": 11,
+      "world": 1,
+      "delta": -0.03858872073901745
+    },
+    {
+      "block": "d275bb3305a3ee97",
+      "seed": 11,
+      "world": 2,
+      "delta": -0.029737398738805924
+    },
+    {
+      "block": "eaff8c786a6c2e5b",
+      "seed": 23,
+      "world": 0,
+      "delta": 0.01430038605762278
+    },
+    {
+      "block": "4ee194c1a247ef32",
+      "seed": 23,
+      "world": 1,
+      "delta": 0.08182238936185493
+    },
+    {
+      "block": "0774c32637e8388a",
+      "seed": 23,
+      "world": 2,
+      "delta": -0.18619084302906463
+    },
+    {
+      "block": "0792ad38d8864bbb",
+      "seed": 37,
+      "world": 0,
+      "delta": 0.23777682523148114
+    },
+    {
+      "block": "674cb849fcdc5d70",
+      "seed": 37,
+      "world": 1,
+      "delta": 0.0671961834401533
+    },
+    {
+      "block": "f3cd1b3fc8e64faf",
+      "seed": 37,
+      "world": 2,
+      "delta": -0.03607129516185978
+    },
+    {
+      "block": "fde9acc25ba48687",
+      "seed": 51,
+      "world": 0,
+      "delta": 0.22864464487882963
+    },
+    {
+      "block": "609b2e9beb27b15c",
+      "seed": 51,
+      "world": 1,
+      "delta": 0.19142324498623814
+    },
+    {
+      "block": "ade0cad347a32b06",
+      "seed": 51,
+      "world": 2,
+      "delta": -0.010391115988193866
+    },
+    {
+      "block": "c6c1ba612650460f",
+      "seed": 67,
+      "world": 0,
+      "delta": -0.18918743917570013
+    },
+    {
+      "block": "f46b2773605da881",
+      "seed": 67,
+      "world": 1,
+      "delta": -0.012106741627023077
+    },
+    {
+      "block": "e720ab27fcb34579",
+      "seed": 67,
+      "world": 2,
+      "delta": -0.05222802088195344
+    }
+  ],
+  "effect": {
+    "mean_delta": 0.028649412396457803,
+    "seed_clusters": 5,
+    "bootstrap_95_percentile": [
+      -0.03949517138226967,
+      0.09679399617518528
+    ],
+    "uncertainty_note": "Exploratory seed-cluster interval; not a human-population confidence interval. Fewer than five seeds: interval withheld."
+  },
+  "interpretation": "Paired controller response to these source variants only; no automatic winner or causal claim about human enjoyment. Reusing a plan after inspecting results is exploratory.",
+  "qualification": "exploratory local pilot; plan frozen before runs but not externally timestamped",
+  "intervention": {
+    "file": "src/core.js",
+    "old": "pers=[{sp:1.14,w:.45,p:1}",
+    "new": "pers=[{sp:1.00,w:.45,p:1}"
+  }
+}
