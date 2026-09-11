@@ -82,6 +82,12 @@ and [`bolt-speed-pilot.json`](evidence/bolt-speed-pilot.json). Reproduce using
 `python scripts/qualify_game_design.py --unicorn ../unicorn-stampede --out pilot`.
 CI uploads all run traces instead of checking that an intervention must win.
 
+The first local snapshot added a trailing newline to three source files. CI
+correctly rejected that plan against the exact upstream bytes. The original plan
+and result are retained with `-local-normalized` filenames. A newly frozen,
+explicitly exploratory exact-byte repeat reproduced the same outcomes. This is
+not an independent confirmatory repeat: the earlier results had already been seen.
+
 ## Human study design
 
 Before optimizing enjoyment, introduce a rendered session recorder and conduct

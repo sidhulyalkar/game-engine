@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "plan_sha256": "329aceeb5177e0ada29ecc70cf2fb6cfb885df67f1a1d5d36a03f3585af26543",
-  "hypothesis": "Exploratory exact-byte repeat of the prior Bolt speed sensitivity pilot: 1.14 versus 1.00 under fixed controller scripts; prior outcomes already inspected, not confirmatory.",
+  "plan_sha256": "ee92a483d8a9a788f3ce391cf5c747f81fe8076e4abfc8c060c930bc2e8be771",
+  "hypothesis": "Reducing Bolt speed multiplier from 1.14 to 1.00 changes final structure-damage progress under fixed seeded stress inputs. This is a controller sensitivity experiment, not a human preference test.",
   "primary_endpoint": "final_progress",
   "scope": "instrumented_controller_experiment_not_human_or_neural",
   "errors": [],
@@ -114,6 +114,10 @@
     "uncertainty_note": "Exploratory seed-cluster interval; not a human-population confidence interval. Fewer than five seeds: interval withheld."
   },
   "interpretation": "Paired controller response to these source variants only; no automatic winner or causal claim about human enjoyment. Reusing a plan after inspecting results is exploratory.",
-  "qualification": "exploratory exact-byte repeat; previous outcomes inspected; original plan retained separately",
-  "supersedes_local_normalized_plan": "ee92a483d8a9a788f3ce391cf5c747f81fe8076e4abfc8c060c930bc2e8be771"
+  "qualification": "exploratory local pilot; plan frozen before runs but not externally timestamped",
+  "intervention": {
+    "file": "src/core.js",
+    "old": "pers=[{sp:1.14,w:.45,p:1}",
+    "new": "pers=[{sp:1.00,w:.45,p:1}"
+  }
 }
