@@ -13,6 +13,7 @@ from .agents import CATEGORY_SPECIALISTS, STUDIO_ROLES, AgentRole
 from .evaluators import deduplicate, judge
 from .idea_space import procedural_concepts
 from .prompts import SYSTEM, inventor_prompt
+from .provider_utility import write_provider_utility_ledger
 from .providers.base import LLMClient
 from .schema import Brief, Concept, ScoreCard
 from .version import ENGINE_VERSION
@@ -341,9 +342,15 @@ class SwarmStudio:
             "observed_call_seconds": round(sum(observed_latencies), 6),
             "population_size": len(concepts),
             "winner_id": concepts[0].concept_id if concepts else None,
+            "provider_utility_path": "provider-utility.json",
         }
         (output_dir / "manifest.json").write_text(json.dumps(payload, indent=2) + "\n")
-        (output_dir / "contributions.json").write_text(json.dumps([asdict(c) for c in contributions], indent=2) + "\n")
+        contributions_path = output_dir / "contributions.json"
+        contributions_path.write_text(json.dumps([asdict(c) for c in contributions], indent=2) + "\n")
+        write_provider_utility_ledger(
+            [contributions_path],
+            output_dir / "provider-utility.json",
+        )
         (output_dir / "leaderboard.json").write_text(json.dumps([
             {"rank": i + 1, "concept": c.to_dict(), "scorecard": score_map[c.concept_id].to_dict()}
             for i, c in enumerate(concepts)
