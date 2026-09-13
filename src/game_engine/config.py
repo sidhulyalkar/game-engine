@@ -26,9 +26,28 @@ class ProviderSpec:
     @classmethod
     def from_dict(cls, value: dict) -> "ProviderSpec":
         spec = cls(**value)
-        if spec.max_concurrency < 1:
-            raise ValueError(f"Provider {spec.name} max_concurrency must be >= 1")
+        spec.validate_request_contract()
         return spec
+
+    def validate_request_contract(self) -> None:
+        if self.max_concurrency < 1:
+            raise ValueError(f"Provider {self.name} max_concurrency must be >= 1")
+
+        # NVIDIA's hosted Kimi-K3 endpoint treats nucleus sampling as model-fixed.
+        # Omit top_p (preferred) or use the currently accepted fixed value rather
+        # than paying for a deterministic HTTP 400 later in a tournament.
+        if self.model.lower() == "moonshotai/kimi-k3":
+            if self.top_p is not None and abs(float(self.top_p) - 0.95) > 1e-9:
+                raise ValueError(
+                    f"Provider {self.name} model moonshotai/kimi-k3 has model-fixed top_p; "
+                    "omit top_p (null) or use 0.95"
+                )
+            effort = self.extra_body.get("reasoning_effort")
+            if effort is not None and effort not in {"low", "high", "max"}:
+                raise ValueError(
+                    f"Provider {self.name} model moonshotai/kimi-k3 reasoning_effort "
+                    "must be one of low, high, max"
+                )
 
 
 def load_provider_specs(path: Path) -> list[ProviderSpec]:
