@@ -20,6 +20,7 @@ on:
       - agent/v0.9-unified-evidence
       - agent/v0.11-evidence-directed-tournament
       - agent/v0.14-repair-provider-health
+      - agent/v0.16-role-typed-swarm
     paths:
       - '.github/workflows/autonomous-studio.yml'
       - 'studio.nvidia*.json'
@@ -129,7 +130,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Shadow scheduler and provider-performance artifacts have no routing authority in v0.14." >> "$GITHUB_STEP_SUMMARY"
+          echo "Role-typed swarm evidence is experimental and has no concept-selection authority in v0.16." >> "$GITHUB_STEP_SUMMARY"
           echo "Automated promotion remains blocked until player-facing preference/fun evidence exists." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve complete tournament evidence
