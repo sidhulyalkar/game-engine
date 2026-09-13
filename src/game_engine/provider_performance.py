@@ -5,6 +5,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .provider_observation import observation_from_usage, provider_token_counts
+
 
 def _json(path: Path, default):
     if not path.exists():
@@ -27,6 +29,22 @@ def _critic_rows(path: Path) -> list[dict[str, Any]]:
         elif "ok" in row and row.get("provider"):
             rows.append(row)
     return rows
+
+
+def _economics_record() -> dict[str, Any]:
+    return {
+        "observed_calls": 0,
+        "timing_observations": 0,
+        "total_elapsed_ms": 0.0,
+        "mean_elapsed_ms": None,
+        "attempt_count_observations": 0,
+        "total_attempts": 0,
+        "total_retries": 0,
+        "token_observations": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
 
 
 def _provider_record() -> dict[str, Any]:
@@ -73,11 +91,73 @@ def _provider_record() -> dict[str, Any]:
             "skipped": 0,
             "failure_classes": {},
         },
+        "observed_economics": {
+            "ideation": _economics_record(),
+            "builder": _economics_record(),
+            "critic": _economics_record(),
+            "repair": _economics_record(),
+        },
     }
 
 
 def _inc(mapping: dict[str, int], key: str, amount: int = 1) -> None:
     mapping[key] = int(mapping.get(key, 0)) + amount
+
+
+def _observe_usage(economics: dict[str, Any], usage: object) -> None:
+    """Accumulate only values actually emitted by a provider call artifact."""
+    if not isinstance(usage, dict):
+        return
+    observation = observation_from_usage(usage)
+    tokens = provider_token_counts(usage)
+    if observation is None and tokens is None:
+        return
+    economics["observed_calls"] += 1
+    if observation is not None:
+        elapsed = observation.get("elapsed_ms")
+        if isinstance(elapsed, (int, float)):
+            economics["timing_observations"] += 1
+            economics["total_elapsed_ms"] += float(elapsed)
+        attempts = observation.get("attempt_count")
+        if isinstance(attempts, int) and attempts >= 1:
+            economics["attempt_count_observations"] += 1
+            economics["total_attempts"] += attempts
+            economics["total_retries"] += max(0, attempts - 1)
+    if tokens is not None:
+        economics["token_observations"] += 1
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = tokens.get(key)
+            if isinstance(value, int):
+                economics[key] += value
+
+
+def _observe_exception(economics: dict[str, Any], observation: object) -> None:
+    if not isinstance(observation, dict):
+        return
+    economics["observed_calls"] += 1
+    elapsed = observation.get("elapsed_ms")
+    if isinstance(elapsed, (int, float)):
+        economics["timing_observations"] += 1
+        economics["total_elapsed_ms"] += float(elapsed)
+    attempts = observation.get("attempt_count")
+    if isinstance(attempts, int) and attempts >= 1:
+        economics["attempt_count_observations"] += 1
+        economics["total_attempts"] += attempts
+        economics["total_retries"] += max(0, attempts - 1)
+
+
+def _observe_meta_usage(providers: defaultdict[str, dict[str, Any]], root: Path, phase: str) -> None:
+    if not root.exists():
+        return
+    for path in sorted(root.glob("*.json")):
+        payload = _json(path, None)
+        if not isinstance(payload, dict) or not payload.get("provider"):
+            continue
+        provider = str(payload["provider"])
+        economics = providers[provider]["observed_economics"][phase]
+        for key in ("usage", "recovery_usage", "contract_repair_usage"):
+            _observe_usage(economics, payload.get(key))
+        _observe_exception(economics, payload.get("failure_observation"))
 
 
 def _build_provider_map(run_root: Path) -> dict[str, str]:
@@ -123,17 +203,26 @@ def _record_staged_evidence(
                 providers[provider]["downstream"][counter] += 1
 
 
-def compile_provider_performance(run_root: Path, output_path: Path | None = None) -> dict:
-    """Summarize observed provider outcomes without making routing decisions.
+def _finalize_economics(record: dict[str, Any]) -> None:
+    for phase in record["observed_economics"].values():
+        n = int(phase["timing_observations"])
+        phase["total_elapsed_ms"] = round(float(phase["total_elapsed_ms"]), 3)
+        phase["mean_elapsed_ms"] = (
+            round(float(phase["total_elapsed_ms"]) / n, 3) if n else None
+        )
 
-    This is deliberately descriptive and phase-specific. It does not rank providers,
-    infer latency that was never recorded, or treat downstream survivor counts as
-    statistically reliable after one run. Operational skips remain distinct from
-    paid failures so future routing experiments do not learn from duplicated calls.
+
+def compile_provider_performance(run_root: Path, output_path: Path | None = None) -> dict:
+    """Summarize observed provider outcomes and economics without routing authority.
+
+    Economics are phase-specific and missingness is explicit. No historical pricing is
+    inferred and no global provider score is produced. A fast failed call and a slow
+    downstream survivor remain separate facts for later calibration.
     """
     providers: defaultdict[str, dict[str, Any]] = defaultdict(_provider_record)
 
-    # Concept work, including targeted rescue.
+    # Concept work, including targeted rescue. Newer contributions may carry usage
+    # observations; older artifacts remain valid with zero economics observations.
     for path in (
         run_root / "swarm-primary" / "contributions.json",
         run_root / "swarm-rescue" / "contributions.json",
@@ -159,6 +248,11 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
             failure_class = row.get("failure_class")
             if failure_class:
                 _inc(phase["failure_classes"], str(failure_class))
+            _observe_usage(providers[provider]["observed_economics"]["ideation"], row.get("usage"))
+            _observe_exception(
+                providers[provider]["observed_economics"]["ideation"],
+                row.get("failure_observation"),
+            )
 
     # Initial implementation races.
     for path in (
@@ -179,6 +273,18 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
                 phase["contract_repairs"] += 1
                 if row.get("ok") and not (row.get("contract_repair_remaining_blockers") or []):
                     phase["contract_repair_survivors"] += 1
+            _observe_exception(
+                providers[provider]["observed_economics"]["builder"],
+                row.get("failure_observation"),
+            )
+
+    # Builder meta artifacts preserve initial, truncation-recovery, and deterministic
+    # contract-repair calls as independent observations.
+    for root in (
+        run_root / "builds-a" / "meta",
+        run_root / "builds-b" / "meta",
+    ):
+        _observe_meta_usage(providers, root, "builder")
 
     build_provider = _build_provider_map(run_root)
     for path in (
@@ -208,10 +314,14 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
             model_id = row.get("model_id")
             if model_id:
                 _inc(phase["model_ids"], str(model_id))
+            economics = providers[provider]["observed_economics"]["critic"]
+            _observe_usage(economics, row.get("usage"))
             if row.get("recovery_attempted"):
                 phase["serialization_recoveries"] += 1
+                _observe_usage(economics, row.get("recovery_usage"))
                 if row.get("ok"):
                     phase["successful_recoveries"] += 1
+            _observe_exception(economics, row.get("failure_observation"))
 
     # Bounded behavioral repairs and critic-driven repairs. Circuit-open rows are
     # scheduled opportunities but not paid model attempts.
@@ -233,6 +343,21 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
             failure_class = row.get("failure_class")
             if failure_class:
                 _inc(phase["failure_classes"], str(failure_class))
+            _observe_usage(providers[provider]["observed_economics"]["repair"], row.get("usage"))
+            _observe_exception(
+                providers[provider]["observed_economics"]["repair"],
+                row.get("failure_observation"),
+            )
+
+    # Behavioral/critic repair meta artifacts retain provider usage even if HTML or
+    # deterministic source parsing rejects the child after the HTTP response.
+    for root in (
+        run_root / "behavior-repairs-a" / "meta",
+        run_root / "behavior-repairs-b" / "meta",
+        run_root / "repair-cycle-a" / "repairs" / "meta",
+        run_root / "repair-cycle-b" / "repairs" / "meta",
+    ):
+        _observe_meta_usage(providers, root, "repair")
 
     normalized: dict[str, Any] = {}
     for provider, record in sorted(providers.items()):
@@ -242,13 +367,19 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
         builder["mean_compressed_bytes"] = (
             round(sum(byte_rows) / len(byte_rows), 1) if byte_rows else None
         )
+        _finalize_economics(record)
         normalized[provider] = record
 
     payload = {
-        "schema_version": "0.2",
+        "schema_version": "0.3",
         "mode": "shadow",
         "run_root": str(run_root),
         "routing_authority": False,
+        "economics_authority": False,
+        "economics_note": (
+            "Only directly observed elapsed time, retries, and provider-reported tokens are included; "
+            "missing observations are never imputed and no pricing or global provider score is inferred."
+        ),
         "providers": normalized,
     }
     if output_path is not None:
