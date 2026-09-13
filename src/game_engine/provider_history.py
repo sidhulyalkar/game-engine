@@ -27,6 +27,7 @@ def _record() -> dict[str, Any]:
             "skipped": 0,
             "concepts_generated": 0,
             "failure_classes": defaultdict(int),
+            "models": defaultdict(int),
             "roles": defaultdict(lambda: {
                 "assignments": 0,
                 "attempts": 0,
@@ -55,10 +56,11 @@ def compile_provider_history(
 ) -> dict[str, Any]:
     """Aggregate provider evidence across tournaments without global ranking.
 
-    The history is intentionally phase- and role-specific. A model that is an
-    excellent builder but unreliable critic is not collapsed into one scalar score.
-    Beta(1,1) posterior means are descriptive uncertainty-aware summaries only; this
-    module has no routing authority.
+    Provider aliases intentionally stay separate because request envelopes differ by
+    stage. Shared model identities are retained as metadata so later analysis can
+    compare aliases without pretending they are operationally interchangeable.
+    Beta(1,1) posterior means are descriptive only; this module has no routing
+    authority and cannot waive evidence or redundancy gates.
     """
     runs = [Path(root) for root in run_roots]
     providers: defaultdict[str, dict[str, Any]] = defaultdict(_record)
@@ -86,10 +88,12 @@ def compile_provider_history(
             target_idea["concepts_generated"] += int(idea.get("concepts_generated", 0))
             target_idea["latency_observations"] += int(idea.get("latency_observations", 0))
             target_idea["observed_call_seconds"] += float(idea.get("observed_call_seconds", 0.0))
+            for model, count in (idea.get("models") or {}).items():
+                target_idea["models"][str(model)] += int(count)
             for kind, count in (idea.get("failure_classes") or {}).items():
                 target_idea["failure_classes"][str(kind)] += int(count)
-            for role, role_row in (idea.get("roles") or {}).items():
-                role_target = target_idea["roles"][str(role)]
+            for role_name, role_row in (idea.get("roles") or {}).items():
+                role_target = target_idea["roles"][str(role_name)]
                 role_assignments = int(role_row.get("assignments", 0))
                 role_skipped = int(role_row.get("skipped", 0))
                 role_target["assignments"] += role_assignments
@@ -117,25 +121,18 @@ def compile_provider_history(
     normalized: dict[str, Any] = {}
     for provider, record in sorted(providers.items()):
         idea = record["ideation"]
-        role_rows = {}
-        for role, role in sorted(idea["roles"].items()):
-            role = dict(role)
-            role["smoothed_reliability"] = _posterior(role["successes"], role["attempts"])
-            role_rows[role if isinstance(role, str) else ""] = role
-        # The loop variable above intentionally cannot serve as the role name after
-        # conversion. Rebuild deterministically from the original mapping instead.
-        role_rows = {}
+        role_rows: dict[str, Any] = {}
         for role_name, role_value in sorted(idea["roles"].items()):
-            role_value = dict(role_value)
-            role_value["smoothed_reliability"] = _posterior(
-                role_value["successes"], role_value["attempts"]
+            role_payload = dict(role_value)
+            role_payload["smoothed_reliability"] = _posterior(
+                role_payload["successes"], role_payload["attempts"]
             )
-            role_rows[role_name] = role_value
+            role_rows[role_name] = role_payload
 
         idea_payload = {
             key: value
             for key, value in idea.items()
-            if key not in {"roles", "failure_classes"}
+            if key not in {"roles", "failure_classes", "models"}
         }
         idea_payload["observed_call_seconds"] = round(idea_payload["observed_call_seconds"], 6)
         idea_payload["mean_call_seconds"] = (
@@ -146,6 +143,7 @@ def compile_provider_history(
         idea_payload["smoothed_reliability"] = _posterior(
             idea_payload["successes"], idea_payload["attempts"]
         )
+        idea_payload["models"] = dict(sorted(idea["models"].items()))
         idea_payload["failure_classes"] = dict(sorted(idea["failure_classes"].items()))
         idea_payload["roles"] = role_rows
 
@@ -165,7 +163,7 @@ def compile_provider_history(
         }
 
     payload = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "mode": "longitudinal-shadow",
         "routing_authority": False,
         "run_roots": observed_runs,
