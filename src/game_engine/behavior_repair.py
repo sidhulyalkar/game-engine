@@ -135,8 +135,9 @@ class BehavioralRepairForge:
     """One bounded repair generation for builds that failed objective gameplay probes.
 
     A caller may supply a provider-circuit registry and reuse it across adjacent repair
-    races. Deterministic request-contract failures can then be learned once instead of
-    being repaid independently by every lineage.
+    races. When no registry is supplied, the circuit is attached to the already reused
+    provider client, which gives the autonomous A/B repair field the same within-run
+    operational memory without introducing global process state.
     """
 
     def __init__(
@@ -150,7 +151,17 @@ class BehavioralRepairForge:
         self.provider_circuits = provider_circuits if provider_circuits is not None else {}
         for provider_spec, client in self.clients:
             provider = getattr(provider_spec, "name", getattr(client, "name", "behavior-repairer"))
-            self.provider_circuits.setdefault(provider, ProviderCircuit(provider))
+            circuit = self.provider_circuits.get(provider)
+            if circuit is None and provider_circuits is None:
+                circuit = getattr(client, "_game_engine_repair_circuit", None)
+            if circuit is None:
+                circuit = ProviderCircuit(provider)
+            self.provider_circuits[provider] = circuit
+            if provider_circuits is None:
+                try:
+                    setattr(client, "_game_engine_repair_circuit", circuit)
+                except Exception:
+                    pass
 
     def build(
         self,
