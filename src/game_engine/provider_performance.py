@@ -70,6 +70,8 @@ def _provider_record() -> dict[str, Any]:
             "behavioral_successes": 0,
             "critic_repair_attempts": 0,
             "critic_repair_successes": 0,
+            "skipped": 0,
+            "failure_classes": {},
         },
     }
 
@@ -126,7 +128,8 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
 
     This is deliberately descriptive and phase-specific. It does not rank providers,
     infer latency that was never recorded, or treat downstream survivor counts as
-    statistically reliable after one run.
+    statistically reliable after one run. Operational skips remain distinct from
+    paid failures so future routing experiments do not learn from duplicated calls.
     """
     providers: defaultdict[str, dict[str, Any]] = defaultdict(_provider_record)
 
@@ -210,7 +213,8 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
                 if row.get("ok"):
                     phase["successful_recoveries"] += 1
 
-    # Bounded behavioral repairs and critic-driven repairs.
+    # Bounded behavioral repairs and critic-driven repairs. Circuit-open rows are
+    # scheduled opportunities but not paid model attempts.
     for path, attempt_key, success_key in (
         (run_root / "behavior-repairs-a" / "builds.json", "behavioral_attempts", "behavioral_successes"),
         (run_root / "behavior-repairs-b" / "builds.json", "behavioral_attempts", "behavioral_successes"),
@@ -219,9 +223,16 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
     ):
         for row in _rows(path):
             provider = str(row.get("provider") or "unknown")
-            providers[provider]["repairs"][attempt_key] += 1
+            phase = providers[provider]["repairs"]
+            if row.get("skipped"):
+                phase["skipped"] += 1
+            else:
+                phase[attempt_key] += 1
             if row.get("ok"):
-                providers[provider]["repairs"][success_key] += 1
+                phase[success_key] += 1
+            failure_class = row.get("failure_class")
+            if failure_class:
+                _inc(phase["failure_classes"], str(failure_class))
 
     normalized: dict[str, Any] = {}
     for provider, record in sorted(providers.items()):
@@ -234,7 +245,7 @@ def compile_provider_performance(run_root: Path, output_path: Path | None = None
         normalized[provider] = record
 
     payload = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "mode": "shadow",
         "run_root": str(run_root),
         "routing_authority": False,
