@@ -15,12 +15,7 @@ def select_joint_finalist(
     *,
     top_k_per_source: int = 8,
 ) -> dict:
-    """Rejudge finalists from independent swarms in one shared population.
-
-    Swarm-local totals include population-relative novelty, so winner totals from
-    different runs are not directly comparable. This creates a single finalist
-    population and recomputes every scorecard against the same competitors.
-    """
+    """Rejudge finalists from independent swarms in one shared population."""
     candidates: list[tuple[str, Concept, float, int]] = []
     for source, path in sources.items():
         if not path.exists():
@@ -35,8 +30,6 @@ def select_joint_finalist(
     if not candidates:
         raise ValueError("no finalist candidates found")
 
-    # IDs are deterministic per originating provider/role. Deduplicate exact IDs
-    # while retaining source provenance, then judge all finalists together.
     unique: list[tuple[str, Concept, float, int]] = []
     seen: set[str] = set()
     for row in candidates:
@@ -110,6 +103,8 @@ def _write_shadow_portfolio(
         (output_dir / "prototype-plan.shadow.json").write_text(json.dumps(plan, indent=2) + "\n")
         return {
             "written": True,
+            "routing_authority": False,
+            "build_authority": False,
             "portfolio_path": "portfolio.shadow.json",
             "prototype_plan_path": "prototype-plan.shadow.json",
             "portfolio_members": [row["concept_id"] for row in portfolio["members"]],
@@ -148,13 +143,6 @@ def write_joint_selection(
         "ranking": selected["ranking"],
         "score_scope": "joint-finalist-population",
     }
-    (output_dir / "selection.json").write_text(json.dumps(selection, indent=2) + "\n")
-    (output_dir / "winner.json").write_text(json.dumps({
-        "brief": brief.to_dict(),
-        "concept": selected["concept"].to_dict(),
-        "scorecard": selected["scorecard"].to_dict(),
-        "selection": selection,
-    }, indent=2) + "\n")
 
     shadow = _write_shadow_portfolio(
         brief,
@@ -164,5 +152,12 @@ def write_joint_selection(
         top_k_per_source,
     )
     selection["shadow_portfolio"] = shadow
+
     (output_dir / "selection.json").write_text(json.dumps(selection, indent=2) + "\n")
+    (output_dir / "winner.json").write_text(json.dumps({
+        "brief": brief.to_dict(),
+        "concept": selected["concept"].to_dict(),
+        "scorecard": selected["scorecard"].to_dict(),
+        "selection": selection,
+    }, indent=2) + "\n")
     return selection
