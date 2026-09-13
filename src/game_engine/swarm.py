@@ -7,11 +7,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .agents import CATEGORY_SPECIALISTS, STUDIO_ROLES, AgentRole
 from .evaluators import deduplicate, judge
 from .idea_space import procedural_concepts
-from .prompts import SYSTEM, inventor_prompt
+from .prompts import REVIEW_SYSTEM, SYSTEM, inventor_prompt, reviewer_prompt
 from .providers.base import LLMClient
 from .schema import Brief, Concept, ScoreCard
 from .version import ENGINE_VERSION
@@ -29,6 +30,9 @@ class SwarmContribution:
     response_sha256: str | None = None
     failure_class: str | None = None
     skipped: bool = False
+    evidence_kind: str = "concept_generation"
+    reviewed_concept_ids: list[str] = field(default_factory=list)
+    review: dict[str, Any] | None = None
 
 
 class ProviderCircuitOpen(RuntimeError):
@@ -152,6 +156,66 @@ def _concept_from_model(item: dict, provider: str, role: str, index: int) -> Con
     )
 
 
+def _review_from_model(payload: dict, seeds: list[Concept]) -> dict[str, Any]:
+    review = payload.get("review")
+    if not isinstance(review, dict):
+        raise ValueError("review response missing review object")
+    expected = [concept.concept_id for concept in seeds]
+    expected_set = set(expected)
+
+    reviewed = review.get("reviewed_ids")
+    if not isinstance(reviewed, list):
+        raise ValueError("reviewed_ids must be a list")
+    reviewed_ids = [str(value) for value in reviewed]
+    if len(reviewed_ids) != len(set(reviewed_ids)) or set(reviewed_ids) != expected_set:
+        raise ValueError("reviewed_ids must contain every supplied candidate exactly once")
+
+    ranking = review.get("ranking")
+    if not isinstance(ranking, list) or len(ranking) != len(expected):
+        raise ValueError("ranking must contain every supplied candidate exactly once")
+    normalized_ranking: list[dict[str, Any]] = []
+    ranking_ids: list[str] = []
+    for row in ranking:
+        if not isinstance(row, dict):
+            raise ValueError("ranking rows must be objects")
+        concept_id = str(row.get("id") or "")
+        score = row.get("score")
+        reason = str(row.get("reason") or "").strip()
+        if concept_id not in expected_set:
+            raise ValueError(f"ranking contains unknown candidate id: {concept_id}")
+        if not isinstance(score, (int, float)) or not 0 <= float(score) <= 10:
+            raise ValueError("ranking score must be numeric in 0..10")
+        if not reason or _word_count(reason) > 30:
+            raise ValueError("ranking reason must contain 1-30 words")
+        ranking_ids.append(concept_id)
+        normalized_ranking.append({
+            "id": concept_id,
+            "score": round(float(score), 3),
+            "reason": reason,
+        })
+    if len(ranking_ids) != len(set(ranking_ids)) or set(ranking_ids) != expected_set:
+        raise ValueError("ranking must contain every supplied candidate exactly once")
+
+    winner_id = str(review.get("winner_id") or "")
+    if not ranking_ids or winner_id != ranking_ids[0]:
+        raise ValueError("winner_id must equal the first ranked candidate")
+
+    risks = review.get("fatal_risks", [])
+    if not isinstance(risks, list) or len(risks) > 3:
+        raise ValueError("fatal_risks must be a list of at most 3 items")
+    summary = str(review.get("summary") or "").strip()
+    if not summary or _word_count(summary) > 80:
+        raise ValueError("review summary must contain 1-80 words")
+
+    return {
+        "reviewed_ids": reviewed_ids,
+        "winner_id": winner_id,
+        "ranking": normalized_ranking,
+        "fatal_risks": [str(value) for value in risks],
+        "summary": summary,
+    }
+
+
 def _roles_for_brief(brief: Brief) -> list[AgentRole]:
     roles = list(STUDIO_ROLES[:-1])
     for category in brief.active_categories:
@@ -236,18 +300,23 @@ class SwarmStudio:
             future_map = {}
             for spec, client, role, sample in jobs:
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+                is_review = role.mode == "review"
+                system = REVIEW_SYSTEM if is_review else SYSTEM
+                prompt = reviewer_prompt(role, brief, sample) if is_review else inventor_prompt(
+                    role, brief, sample, concepts_per_call
+                )
                 future = pool.submit(
                     _complete_limited,
                     provider_limits[provider_name],
                     provider_circuits[provider_name],
                     client,
-                    SYSTEM,
-                    inventor_prompt(role, brief, sample, concepts_per_call),
+                    system,
+                    prompt,
                 )
-                future_map[future] = (spec, client, role)
+                future_map[future] = (spec, client, role, sample)
 
             for future in as_completed(future_map):
-                spec, client, role = future_map[future]
+                spec, client, role, sample = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
                 raw_response_path: str | None = None
                 response_sha256: str | None = None
@@ -257,6 +326,21 @@ class SwarmStudio:
                         raw_dir, provider_name, role.name, response
                     )
                     payload = _extract_json(response)
+                    if role.mode == "review":
+                        review = _review_from_model(payload, sample)
+                        contributions.append(SwarmContribution(
+                            provider=provider_name,
+                            role=role.name,
+                            ok=True,
+                            concept_ids=[],
+                            raw_response_path=raw_response_path,
+                            response_sha256=response_sha256,
+                            evidence_kind="concept_review",
+                            reviewed_concept_ids=list(review["reviewed_ids"]),
+                            review=review,
+                        ))
+                        continue
+
                     items = payload.get("concepts", [])
                     if not isinstance(items, list):
                         raise ValueError("concepts must be a list")
@@ -295,6 +379,7 @@ class SwarmStudio:
                         response_sha256=response_sha256,
                         failure_class=failure_class,
                         skipped=skipped,
+                        evidence_kind="concept_review" if role.mode == "review" else "concept_generation",
                     ))
 
         population = deduplicate(seeds + generated, threshold=0.84)
@@ -325,6 +410,7 @@ class SwarmStudio:
             "providers": sorted({c.provider for c in contributions}),
             "successful_providers": successful_providers,
             "successful_assignments": len(successful),
+            "successful_review_assignments": sum(c.ok and c.evidence_kind == "concept_review" for c in contributions),
             "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
             "skipped_assignments": sum(c.skipped for c in contributions),
             "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
@@ -348,6 +434,7 @@ class SwarmStudio:
                     "active_categories": brief.active_categories,
                     "successful_providers": successful_providers,
                     "successful_assignments": len(successful),
+                    "successful_review_assignments": sum(c.ok and c.evidence_kind == "concept_review" for c in contributions),
                     "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
                     "skipped_assignments": sum(c.skipped for c in contributions),
                     "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
