@@ -49,6 +49,21 @@ def _runtime_error(message: str, started: float, attempt_count: int) -> RuntimeE
     return exc
 
 
+def _usage_with_transport_observation(
+    raw_usage: object,
+    *,
+    elapsed_ms: float,
+    attempt_count: int,
+) -> dict[str, Any]:
+    usage = dict(raw_usage) if isinstance(raw_usage, dict) else {}
+    usage["_game_engine"] = {
+        "elapsed_ms": round(float(elapsed_ms), 3),
+        "attempt_count": max(1, int(attempt_count)),
+        "retry_count": max(0, int(attempt_count) - 1),
+    }
+    return usage
+
+
 @dataclass(slots=True)
 class CompletionResult:
     content: str
@@ -139,12 +154,15 @@ class OpenAICompatibleClient:
                 finish_reason = choice.get("finish_reason")
                 if finish_reason is not None:
                     finish_reason = str(finish_reason)
-                usage = data.get("usage")
+                elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
+                usage = _usage_with_transport_observation(
+                    data.get("usage"), elapsed_ms=elapsed_ms, attempt_count=attempt_count
+                )
                 return CompletionResult(
                     content=content,
                     finish_reason=finish_reason,
-                    usage=usage if isinstance(usage, dict) else None,
-                    elapsed_ms=round((time.perf_counter() - started) * 1000.0, 3),
+                    usage=usage,
+                    elapsed_ms=elapsed_ms,
                     attempt_count=attempt_count,
                 )
             except urllib.error.HTTPError as exc:
