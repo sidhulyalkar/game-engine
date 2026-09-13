@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import ProviderSpec, load_provider_specs
+from .provider_utility import build_provider_utility_from_rows
 from .schema import Brief
 
 
@@ -48,7 +49,7 @@ def contribution_summary(contributions: list[dict[str, Any]], models: dict[str, 
     covered_roles = sorted({str(row.get("role")) for row in successful if row.get("role")})
     successful_providers = sorted({str(row.get("provider")) for row in successful if row.get("provider")})
     successful_models = sorted({
-        models.get(str(row.get("provider")), f"unknown:{row.get('provider')}")
+        str(row.get("model") or models.get(str(row.get("provider")), f"unknown:{row.get('provider')}"))
         for row in successful
         if row.get("provider")
     })
@@ -107,10 +108,6 @@ def assess_primary_health(
         and llm_expanded_population
         and winner_present
     )
-    # `usable` means the tournament has a valid substrate from which it can continue.
-    # A complete primary-model outage is therefore recoverable when deterministic
-    # exploration still produced its expected population and winner. No LLM evidence
-    # is credited here: rescue must still establish the final hard coverage quorum.
     usable = primary_llm_usable or deterministic_substrate_usable
     coverage_quorum = (
         primary_llm_usable
@@ -161,19 +158,47 @@ def _active_rescue_roles(spec: ProviderSpec, brief: Brief) -> list[str]:
     ]
 
 
+def _utility_stats(utility_ledger: dict[str, Any] | None, model: str, role: str) -> dict[str, Any] | None:
+    if not utility_ledger:
+        return None
+    for row in utility_ledger.get("model_roles", []):
+        if row.get("model") == model and row.get("role") == role and int(row.get("attempted_assignments", 0)) > 0:
+            return row
+    row = utility_ledger.get("models", {}).get(model)
+    return row if isinstance(row, dict) and int(row.get("attempted_assignments", 0)) > 0 else None
+
+
+def _rescue_candidate_key(
+    spec: ProviderSpec,
+    role: str,
+    primary_models: set[str],
+    utility_ledger: dict[str, Any] | None,
+) -> tuple[Any, ...]:
+    stats = _utility_stats(utility_ledger, spec.model, role)
+    reliability = float(stats.get("smoothed_reliability", 0.5)) if stats else 0.5
+    mean_seconds = stats.get("mean_call_seconds") if stats else None
+    latency = float(mean_seconds) if mean_seconds is not None else 0.0
+    observed = int(stats.get("attempted_assignments", 0)) if stats else 0
+    return (
+        spec.model in primary_models,
+        -reliability,
+        0 if observed == 0 else 1,
+        latency,
+        spec.name,
+    )
+
+
 def build_rescue_config(
     base_specs: list[ProviderSpec],
     primary_health: dict[str, Any],
     brief: Brief,
+    utility_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a bounded rescue roster for missing critical evidence and diversity.
 
-    Every missing gate-critical role receives up to two distinct configured model
-    families when available, including the active medium specialist. This prevents a
-    single remote family from being the only keyholder for Desktop/Online/WebXR
-    qualification. Model-family diversity is still pursued, but the final health gate
-    treats it as confidence evidence rather than discarding complete role coverage
-    during a partial provider outage.
+    Utility is a tie-break only. It never removes configured providers, weakens
+    critical-role redundancy, or changes assignment quorum requirements. Unknown
+    models remain neutral so the system can continue exploring them.
     """
     missing_order = [str(role) for role in primary_health.get("missing_roles") or []]
     missing = set(missing_order)
@@ -194,7 +219,7 @@ def build_rescue_config(
     redundant_roles: list[str] = []
     for role in missing_order:
         candidates = [spec for spec in base_specs if role in active_by_name[spec.name]]
-        candidates.sort(key=lambda spec: (spec.model in primary_models, spec.name))
+        candidates.sort(key=lambda spec: _rescue_candidate_key(spec, role, primary_models, utility_ledger))
         target_models = 2 if role in critical else 1
         seen_models: set[str] = set()
         for spec in candidates:
@@ -211,12 +236,9 @@ def build_rescue_config(
         names = {name for name, roles in selected.items() if roles}
         return [spec for spec in base_specs if spec.name in names]
 
-    # If role coverage is already complete but the primary has only one model family,
-    # spend at most one bounded call on an independently configured model. This is an
-    # evidence-quality upgrade, not a hard requirement for final concept-stage health.
     if need_model_diversity and not any(spec.model not in primary_models for spec in selected_specs()):
         novel = [spec for spec in base_specs if spec.model not in primary_models and active_by_name[spec.name]]
-        novel.sort(key=lambda spec: spec.name)
+        novel.sort(key=lambda spec: _rescue_candidate_key(spec, active_by_name[spec.name][0], primary_models, utility_ledger))
         if novel:
             spec = novel[0]
             preferred = [role for role in missing_order if role in active_by_name[spec.name]]
@@ -225,23 +247,27 @@ def build_rescue_config(
 
     needed_calls = max(0, 5 - successful_assignments)
     while sum(len(roles) for roles in selected.values()) < needed_calls:
-        candidates: list[tuple[bool, str, ProviderSpec, str]] = []
+        candidates: list[tuple[tuple[Any, ...], ProviderSpec, str]] = []
         for spec in base_specs:
             for role in active_by_name[spec.name]:
                 if role not in selected[spec.name]:
-                    candidates.append((spec.model in primary_models, spec.name, spec, role))
+                    candidates.append((_rescue_candidate_key(spec, role, primary_models, utility_ledger), spec, role))
         if not candidates:
             break
-        _, _, spec, role = sorted(candidates, key=lambda row: (row[0], row[1], row[3]))[0]
+        _, spec, role = sorted(candidates, key=lambda row: (row[0], row[2]))[0]
         add(spec, role)
 
+    ordered_specs = sorted(
+        [spec for spec in base_specs if selected[spec.name]],
+        key=lambda spec: min(
+            _rescue_candidate_key(spec, role, primary_models, utility_ledger)
+            for role in selected[spec.name]
+        ),
+    )
     providers: list[dict[str, Any]] = []
-    for spec in base_specs:
-        roles = selected[spec.name]
-        if not roles:
-            continue
+    for spec in ordered_specs:
         payload = asdict(spec)
-        payload["roles"] = roles
+        payload["roles"] = selected[spec.name]
         providers.append(payload)
 
     assigned_roles = {role for roles in selected.values() for role in roles}
@@ -265,6 +291,8 @@ def build_rescue_config(
             "planned_assignments": planned_assignments,
             "planned_total_assignments": planned_total_assignments,
             "assignment_quorum_plannable": planned_total_assignments >= 5,
+            "utility_policy": "tie-break-only",
+            "utility_observations": int((utility_ledger or {}).get("observations", 0)),
         },
     }
 
@@ -284,10 +312,6 @@ def assess_combined_health(
     missing = [role for role in required if role not in covered]
     diversity = _diversity_fields(summary)
 
-    # Final concept-stage qualification is a coverage quorum. Heterogeneous model
-    # evidence raises confidence but cannot veto complete evidence merely because a
-    # remote model family is temporarily unavailable. Downstream byte/browser/source/
-    # behavioral/player-facing gates remain independent promotion blockers.
     coverage_quorum = (
         bool(summary["successful_models"])
         and summary["successful_assignments"] >= 5
@@ -317,6 +341,17 @@ def load_contributions(path: Path) -> list[dict[str, Any]]:
     return [row for row in payload if isinstance(row, dict)]
 
 
+def _utility_rows(contributions: list[dict[str, Any]], specs: list[ProviderSpec]) -> list[dict[str, Any]]:
+    model_map = provider_model_map([specs])
+    rows: list[dict[str, Any]] = []
+    for row in contributions:
+        enriched = dict(row)
+        if not enriched.get("model"):
+            enriched["model"] = model_map.get(str(enriched.get("provider")))
+        rows.append(enriched)
+    return rows
+
+
 def write_primary_health_plan(
     brief: Brief,
     manifest_path: Path,
@@ -338,7 +373,13 @@ def write_primary_health_plan(
         brief,
         deterministic_seed_count=deterministic_seed_count,
     )
-    rescue_config = build_rescue_config(rescue_specs, health, brief)
+    utility = build_provider_utility_from_rows(
+        _utility_rows(contributions, primary_specs),
+        sources=[str(contributions_path)],
+    )
+    utility_path = output_dir / "primary-provider-utility.json"
+    utility_path.write_text(json.dumps(utility, indent=2) + "\n")
+    rescue_config = build_rescue_config(rescue_specs, health, brief, utility_ledger=utility)
     rescue_path = output_dir / "rescue.generated.json"
     rescue_path.write_text(json.dumps(rescue_config, indent=2) + "\n")
     reason = rescue_config.get("rescue_reason", {})
@@ -371,6 +412,8 @@ def write_primary_health_plan(
         health["status"] = "failed"
         health["usable"] = False
     health["rescue_config_path"] = str(rescue_path)
+    health["provider_utility_path"] = str(utility_path)
+    health["rescue_utility_policy"] = reason.get("utility_policy")
     (output_dir / "primary-health.json").write_text(json.dumps(health, indent=2) + "\n")
     return health
 
@@ -395,5 +438,12 @@ def write_combined_health(
         rescue_used = True
     health = assess_combined_health(contribution_sets, spec_groups, brief)
     health["rescue_used"] = rescue_used
+    combined_rows: list[dict[str, Any]] = []
+    for rows, specs in zip(contribution_sets, spec_groups):
+        combined_rows.extend(_utility_rows(rows, specs))
+    utility = build_provider_utility_from_rows(combined_rows)
+    utility_path = output_dir / "combined-provider-utility.json"
+    utility_path.write_text(json.dumps(utility, indent=2) + "\n")
+    health["provider_utility_path"] = str(utility_path)
     (output_dir / "final-health.json").write_text(json.dumps(health, indent=2) + "\n")
     return health
