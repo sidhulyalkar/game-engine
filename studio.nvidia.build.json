@@ -29,6 +29,9 @@
       "timeout": 240,
       "retries": 0,
       "max_concurrency": 1,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
       "enabled": true
     }
   ]
