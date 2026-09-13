@@ -4,14 +4,17 @@ import hashlib
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .agents import CATEGORY_SPECIALISTS, STUDIO_ROLES, AgentRole
 from .evaluators import deduplicate, judge
 from .idea_space import procedural_concepts
 from .prompts import SYSTEM, inventor_prompt
+from .provider_observation import exception_observation, usage_with_observation
 from .providers.base import LLMClient
 from .schema import Brief, Concept, ScoreCard
 from .version import ENGINE_VERSION
@@ -29,6 +32,8 @@ class SwarmContribution:
     response_sha256: str | None = None
     failure_class: str | None = None
     skipped: bool = False
+    usage: dict[str, Any] | None = None
+    failure_observation: dict[str, Any] | None = None
 
 
 class ProviderCircuitOpen(RuntimeError):
@@ -167,17 +172,40 @@ def _complete_limited(
     client: LLMClient,
     system: str,
     prompt: str,
-) -> str:
+) -> tuple[str, dict[str, Any] | None]:
     circuit.assert_closed()
     with semaphore:
         circuit.assert_closed()
+        started = time.perf_counter()
         try:
-            response = client.complete(system, prompt)
+            method = getattr(client, "complete_with_metadata", None)
+            if callable(method):
+                result = method(system, prompt)
+                response = getattr(result, "content", None)
+                if not isinstance(response, str):
+                    raise RuntimeError("ideation metadata completion returned no string content")
+                usage = usage_with_observation(result)
+            else:
+                response = client.complete(system, prompt)
+                elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
+                usage = {
+                    "_game_engine": {
+                        "elapsed_ms": elapsed_ms,
+                        "attempt_count": 1,
+                        "retry_count": 0,
+                    }
+                }
         except Exception as exc:
+            if getattr(exc, "elapsed_ms", None) is None:
+                try:
+                    setattr(exc, "elapsed_ms", round((time.perf_counter() - started) * 1000.0, 3))
+                    setattr(exc, "attempt_count", 1)
+                except Exception:
+                    pass
             circuit.record_failure(exc)
             raise
         circuit.record_success()
-        return response
+        return response, usage
 
 
 def _safe_fragment(value: str) -> str:
@@ -251,8 +279,9 @@ class SwarmStudio:
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
                 raw_response_path: str | None = None
                 response_sha256: str | None = None
+                usage: dict[str, Any] | None = None
                 try:
-                    response = future.result()
+                    response, usage = future.result()
                     raw_response_path, response_sha256 = _persist_raw_response(
                         raw_dir, provider_name, role.name, response
                     )
@@ -281,6 +310,7 @@ class SwarmStudio:
                         warnings=warnings,
                         raw_response_path=raw_response_path,
                         response_sha256=response_sha256,
+                        usage=usage,
                     ))
                 except Exception as exc:
                     skipped = isinstance(exc, ProviderCircuitOpen)
@@ -295,6 +325,8 @@ class SwarmStudio:
                         response_sha256=response_sha256,
                         failure_class=failure_class,
                         skipped=skipped,
+                        usage=usage,
+                        failure_observation=exception_observation(exc),
                     ))
 
         population = deduplicate(seeds + generated, threshold=0.84)
