@@ -25,6 +25,7 @@ class SwarmContribution:
     role: str
     ok: bool
     concept_ids: list[str]
+    model: str | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
     raw_response_path: str | None = None
@@ -253,6 +254,7 @@ class SwarmStudio:
             for future in as_completed(future_map):
                 spec, client, role, submitted_at = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+                model_id = str(getattr(spec, "model", "") or "") or None
                 raw_response_path: str | None = None
                 response_sha256: str | None = None
                 elapsed_seconds = round(time.monotonic() - submitted_at, 6)
@@ -283,6 +285,7 @@ class SwarmStudio:
                         role=role.name,
                         ok=True,
                         concept_ids=[c.concept_id for c in concepts],
+                        model=model_id,
                         warnings=warnings,
                         raw_response_path=raw_response_path,
                         response_sha256=response_sha256,
@@ -296,6 +299,7 @@ class SwarmStudio:
                         role=role.name,
                         ok=False,
                         concept_ids=[],
+                        model=model_id,
                         error=f"{type(exc).__name__}: {exc}",
                         raw_response_path=raw_response_path,
                         response_sha256=response_sha256,
