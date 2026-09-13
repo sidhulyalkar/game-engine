@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .portfolio_selection import concept_distance, select_concept_portfolio
+from .progressive_portfolio import plan_progressive_prototypes
 from .provider_performance import compile_provider_performance
 from .schema import Brief, Concept
 
@@ -33,15 +34,18 @@ def analyze_tournament_shadow(
     portfolio_size: int = 4,
     top_k_per_source: int = 12,
     min_distance: float = 0.28,
+    initial_prototype_concepts: int = 2,
+    max_builder_calls: int = 4,
 ) -> dict[str, Any]:
     """Analyze an already-paid-for tournament without changing routing or spending.
 
-    The report answers two questions only:
+    The report answers three questions:
       1. Which mechanically distinct concepts did incumbent-only selection discard?
       2. Which provider phases actually produced usable artifacts/evidence?
+      3. How could the same maximum builder-call budget buy more hypothesis breadth?
 
-    It is deliberately shadow-only. No result here can promote a game or suppress a
-    provider. The same function works on successful or partially failed tournaments.
+    It is deliberately shadow-only. No result here can promote a game, suppress a
+    provider, or authorize a build.
     """
     run_root = Path(run_root)
     winner = _load_json(run_root / "champion" / "winner.json")
@@ -57,6 +61,12 @@ def analyze_tournament_shadow(
         top_k_per_source=top_k_per_source,
         min_distance=min_distance,
         incumbent_concept_id=incumbent.concept_id,
+    )
+    progressive_plan = plan_progressive_prototypes(
+        portfolio,
+        initial_concepts=initial_prototype_concepts,
+        max_total_builder_calls=max_builder_calls,
+        confirmation_builds_per_survivor=1,
     )
 
     alternatives = []
@@ -82,7 +92,7 @@ def analyze_tournament_shadow(
     distances = [row["incumbent_distance"] for row in alternatives]
     provider_performance = compile_provider_performance(run_root)
     payload = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "mode": "shadow",
         "routing_authority": False,
         "build_authority": False,
@@ -94,6 +104,7 @@ def analyze_tournament_shadow(
             "joint_score": selection.get("score"),
         },
         "portfolio": portfolio,
+        "progressive_prototype_plan": progressive_plan,
         "discarded_high_value_hypotheses": alternatives,
         "discarded_hypothesis_count": len(alternatives),
         "discarded_distance_summary": {
@@ -103,8 +114,9 @@ def analyze_tournament_shadow(
         },
         "provider_performance": provider_performance,
         "interpretation_boundary": (
-            "Portfolio descriptors are preprototype lexical/mechanic proxies and provider "
-            "performance is descriptive. Neither is gameplay quality or routing authority."
+            "Portfolio descriptors are preprototype lexical/mechanic proxies, provider "
+            "performance is descriptive, and the progressive plan is only a spend "
+            "counterfactual. None of these are gameplay quality or routing authority."
         ),
     }
     if output_path is not None:
