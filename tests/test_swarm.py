@@ -3,6 +3,7 @@ import threading
 import time
 from dataclasses import dataclass
 
+from game_engine.providers.openai_compatible import CompletionResult
 from game_engine.schema import Brief
 from game_engine.swarm import SwarmStudio, _extract_json
 
@@ -47,7 +48,36 @@ def test_swarm_accepts_provider_concepts():
     concepts, scores, contributions = SwarmStudio([(FakeSpec(), FakeClient())], max_workers=1).ideate(brief, deterministic_seeds=4, concepts_per_call=1)
     assert any("provider:fake" in c.tags for c in concepts)
     assert contributions[0].ok
+    assert contributions[0].usage["_game_engine"]["attempt_count"] == 1
+    assert contributions[0].usage["_game_engine"]["elapsed_ms"] >= 0
     assert len(scores) == len(concepts)
+
+
+def test_swarm_preserves_provider_token_usage_and_transport_observation():
+    class MetadataClient:
+        name = "fake"
+
+        def complete_with_metadata(self, system: str, prompt: str):
+            return CompletionResult(
+                content=json.dumps({"concepts": [_VALID_CONCEPT]}),
+                finish_reason="stop",
+                usage={"prompt_tokens": 31, "completion_tokens": 17},
+                elapsed_ms=4321.5,
+                attempt_count=2,
+            )
+
+    brief = Brief(theme="Unicorns and Rainbows")
+    _, _, contributions = SwarmStudio([(FakeSpec(), MetadataClient())], max_workers=1).ideate(
+        brief, deterministic_seeds=4, concepts_per_call=1
+    )
+    usage = contributions[0].usage
+    assert usage["prompt_tokens"] == 31
+    assert usage["completion_tokens"] == 17
+    assert usage["_game_engine"] == {
+        "elapsed_ms": 4321.5,
+        "attempt_count": 2,
+        "retry_count": 1,
+    }
 
 
 def test_provider_local_concurrency_is_bounded():
