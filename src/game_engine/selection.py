@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from .evaluators import judge
+from .portfolio_selection import select_concept_portfolio
+from .progressive_portfolio import plan_progressive_prototypes
 from .schema import Brief, Concept
 
 
@@ -81,6 +83,50 @@ def select_joint_finalist(
     }
 
 
+def _write_shadow_portfolio(
+    brief: Brief,
+    sources: dict[str, Path],
+    output_dir: Path,
+    incumbent_concept_id: str,
+    top_k_per_source: int,
+) -> dict:
+    """Persist a no-authority counterfactual without endangering live selection."""
+    try:
+        portfolio = select_concept_portfolio(
+            brief,
+            sources,
+            portfolio_size=4,
+            top_k_per_source=max(12, top_k_per_source),
+            min_distance=0.28,
+            incumbent_concept_id=incumbent_concept_id,
+        )
+        plan = plan_progressive_prototypes(
+            portfolio,
+            initial_concepts=2,
+            max_total_builder_calls=4,
+            confirmation_builds_per_survivor=1,
+        )
+        (output_dir / "portfolio.shadow.json").write_text(json.dumps(portfolio, indent=2) + "\n")
+        (output_dir / "prototype-plan.shadow.json").write_text(json.dumps(plan, indent=2) + "\n")
+        return {
+            "written": True,
+            "portfolio_path": "portfolio.shadow.json",
+            "prototype_plan_path": "prototype-plan.shadow.json",
+            "portfolio_members": [row["concept_id"] for row in portfolio["members"]],
+            "initial_prototype_concepts": [row["concept_id"] for row in plan["slots"]],
+            "max_total_builder_calls": plan["max_total_builder_calls"],
+        }
+    except Exception as exc:
+        error = {
+            "written": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "routing_authority": False,
+            "build_authority": False,
+        }
+        (output_dir / "portfolio-shadow-error.json").write_text(json.dumps(error, indent=2) + "\n")
+        return error
+
+
 def write_joint_selection(
     brief: Brief,
     sources: dict[str, Path],
@@ -109,4 +155,14 @@ def write_joint_selection(
         "scorecard": selected["scorecard"].to_dict(),
         "selection": selection,
     }, indent=2) + "\n")
+
+    shadow = _write_shadow_portfolio(
+        brief,
+        sources,
+        output_dir,
+        selected["concept"].concept_id,
+        top_k_per_source,
+    )
+    selection["shadow_portfolio"] = shadow
+    (output_dir / "selection.json").write_text(json.dumps(selection, indent=2) + "\n")
     return selection
