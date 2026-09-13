@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -29,6 +30,7 @@ class SwarmContribution:
     response_sha256: str | None = None
     failure_class: str | None = None
     skipped: bool = False
+    elapsed_seconds: float | None = None
 
 
 class ProviderCircuitOpen(RuntimeError):
@@ -236,6 +238,7 @@ class SwarmStudio:
             future_map = {}
             for spec, client, role, sample in jobs:
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
+                submitted_at = time.monotonic()
                 future = pool.submit(
                     _complete_limited,
                     provider_limits[provider_name],
@@ -244,13 +247,14 @@ class SwarmStudio:
                     SYSTEM,
                     inventor_prompt(role, brief, sample, concepts_per_call),
                 )
-                future_map[future] = (spec, client, role)
+                future_map[future] = (spec, client, role, submitted_at)
 
             for future in as_completed(future_map):
-                spec, client, role = future_map[future]
+                spec, client, role, submitted_at = future_map[future]
                 provider_name = getattr(spec, "name", getattr(client, "name", "provider"))
                 raw_response_path: str | None = None
                 response_sha256: str | None = None
+                elapsed_seconds = round(time.monotonic() - submitted_at, 6)
                 try:
                     response = future.result()
                     raw_response_path, response_sha256 = _persist_raw_response(
@@ -281,6 +285,7 @@ class SwarmStudio:
                         warnings=warnings,
                         raw_response_path=raw_response_path,
                         response_sha256=response_sha256,
+                        elapsed_seconds=elapsed_seconds,
                     ))
                 except Exception as exc:
                     skipped = isinstance(exc, ProviderCircuitOpen)
@@ -295,6 +300,7 @@ class SwarmStudio:
                         response_sha256=response_sha256,
                         failure_class=failure_class,
                         skipped=skipped,
+                        elapsed_seconds=elapsed_seconds,
                     ))
 
         population = deduplicate(seeds + generated, threshold=0.84)
@@ -316,6 +322,10 @@ class SwarmStudio:
         score_map = {s.concept_id: s for s in scores}
         successful = [c for c in contributions if c.ok]
         successful_providers = sorted({c.provider for c in successful})
+        observed_latencies = [
+            c.elapsed_seconds for c in contributions
+            if c.elapsed_seconds is not None and not c.skipped
+        ]
         payload = {
             "engine_version": ENGINE_VERSION,
             "mode": "multi-model-swarm",
@@ -328,6 +338,7 @@ class SwarmStudio:
             "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
             "skipped_assignments": sum(c.skipped for c in contributions),
             "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
+            "observed_call_seconds": round(sum(observed_latencies), 6),
             "population_size": len(concepts),
             "winner_id": concepts[0].concept_id if concepts else None,
         }
@@ -351,6 +362,7 @@ class SwarmStudio:
                     "failed_assignments": sum(not c.ok and not c.skipped for c in contributions),
                     "skipped_assignments": sum(c.skipped for c in contributions),
                     "partially_rejected_concepts": sum(len(c.warnings) for c in contributions),
+                    "observed_call_seconds": round(sum(observed_latencies), 6),
                 },
             }, indent=2) + "\n")
         return payload
