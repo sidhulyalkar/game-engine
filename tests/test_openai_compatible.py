@@ -9,12 +9,13 @@ from game_engine.providers.openai_compatible import OpenAICompatibleClient
 
 
 def client(**kwargs):
+    retries = kwargs.pop("retries", 0)
     return OpenAICompatibleClient(
         name="test",
         model="model",
         base_url="https://example.test/v1",
         api_key_env="TEST_PROVIDER_KEY",
-        retries=0,
+        retries=retries,
         **kwargs,
     )
 
