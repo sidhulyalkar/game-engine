@@ -10,6 +10,7 @@ from typing import Any
 
 from .packaging import package_game
 from .prototype import _complete_with_provenance, _extract_html_response
+from .provider_health import ProviderCircuit, ProviderCircuitOpen, classify_provider_failure
 from .providers.base import LLMClient
 from .reality import discover_builds
 from .schema import Brief, Concept
@@ -32,6 +33,8 @@ class BehavioralRepairResult:
     response_format: str | None = None
     source_falsification_path: str | None = None
     remaining_source_blockers: list[str] | None = None
+    failure_class: str | None = None
+    skipped: bool = False
     error: str | None = None
 
 
@@ -112,12 +115,42 @@ def _blocker_codes(report: dict[str, Any]) -> list[str]:
     ]
 
 
-class BehavioralRepairForge:
-    """One bounded repair generation for builds that failed objective gameplay probes."""
+def _complete_with_circuit(
+    circuit: ProviderCircuit,
+    client: LLMClient,
+    system: str,
+    prompt: str,
+):
+    circuit.assert_closed()
+    try:
+        result = _complete_with_provenance(client, system, prompt)
+    except Exception as exc:
+        circuit.record_failure(exc)
+        raise
+    circuit.record_success()
+    return result
 
-    def __init__(self, clients: list[tuple[object, LLMClient]], max_workers: int = 2):
+
+class BehavioralRepairForge:
+    """One bounded repair generation for builds that failed objective gameplay probes.
+
+    A caller may supply a provider-circuit registry and reuse it across adjacent repair
+    races. Deterministic request-contract failures can then be learned once instead of
+    being repaid independently by every lineage.
+    """
+
+    def __init__(
+        self,
+        clients: list[tuple[object, LLMClient]],
+        max_workers: int = 2,
+        provider_circuits: dict[str, ProviderCircuit] | None = None,
+    ):
         self.clients = clients
         self.max_workers = max_workers
+        self.provider_circuits = provider_circuits if provider_circuits is not None else {}
+        for provider_spec, client in self.clients:
+            provider = getattr(provider_spec, "name", getattr(client, "name", "behavior-repairer"))
+            self.provider_circuits.setdefault(provider, ProviderCircuit(provider))
 
     def build(
         self,
@@ -146,6 +179,7 @@ class BehavioralRepairForge:
                 "repair_candidates": 0,
                 "attempted_children": 0,
                 "successful_children": 0,
+                "skipped_children": 0,
             }, indent=2) + "\n")
             return []
 
@@ -161,7 +195,17 @@ class BehavioralRepairForge:
                 html,
             )
             for provider_spec, client in self.clients:
-                jobs.append((provider_spec, client, parent, decision, evidence, system, prompt))
+                provider = getattr(provider_spec, "name", getattr(client, "name", "behavior-repairer"))
+                jobs.append((
+                    provider_spec,
+                    client,
+                    self.provider_circuits[provider],
+                    parent,
+                    decision,
+                    evidence,
+                    system,
+                    prompt,
+                ))
 
         results: list[BehavioralRepairResult] = []
         raw_dir = output_dir / "raw"
@@ -171,12 +215,12 @@ class BehavioralRepairForge:
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = {
-                pool.submit(_complete_with_provenance, client, system, prompt):
-                    (provider_spec, client, parent, decision, evidence)
-                for provider_spec, client, parent, decision, evidence, system, prompt in jobs
+                pool.submit(_complete_with_circuit, circuit, client, system, prompt):
+                    (provider_spec, client, circuit, parent, decision, evidence)
+                for provider_spec, client, circuit, parent, decision, evidence, system, prompt in jobs
             }
             for future in as_completed(futures):
-                provider_spec, client, parent, decision, evidence = futures[future]
+                provider_spec, client, circuit, parent, decision, evidence = futures[future]
                 provider = getattr(provider_spec, "name", getattr(client, "name", "behavior-repairer"))
                 parent_id = str(parent.get("build_id"))
                 raw_path: Path | None = None
@@ -229,6 +273,7 @@ class BehavioralRepairForge:
                             response_format=response_format,
                             source_falsification_path=str(falsification_path),
                             remaining_source_blockers=blockers,
+                            failure_class="source_contract",
                             error="SourceFalsificationError after behavioral repair: " + ", ".join(blockers),
                         ))
                         continue
@@ -251,9 +296,14 @@ class BehavioralRepairForge:
                         response_format=response_format,
                         source_falsification_path=str(falsification_path),
                         remaining_source_blockers=[],
+                        failure_class=None if package.ok else "byte_budget",
                         error=None if package.ok else "compressed byte limit exceeded",
                     ))
                 except Exception as exc:
+                    skipped = isinstance(exc, ProviderCircuitOpen)
+                    failure_class = "circuit_open" if skipped else classify_provider_failure(exc)
+                    if failure_class is None and raw_path is not None:
+                        failure_class = "content_or_schema"
                     results.append(BehavioralRepairResult(
                         provider=provider,
                         parent_build_id=parent_id,
@@ -269,15 +319,22 @@ class BehavioralRepairForge:
                         response_format=None,
                         source_falsification_path=str(falsification_path) if falsification_path else None,
                         remaining_source_blockers=None,
+                        failure_class=failure_class,
+                        skipped=skipped,
                         error=f"{type(exc).__name__}: {exc}",
                     ))
 
-        results.sort(key=lambda row: (not row.ok, -(row.byte_headroom or -10**9), row.provider))
+        results.sort(key=lambda row: (not row.ok, row.skipped, -(row.byte_headroom or -10**9), row.provider))
         (output_dir / "builds.json").write_text(json.dumps([asdict(row) for row in results], indent=2) + "\n")
         (output_dir / "behavior-repair-manifest.json").write_text(json.dumps({
             "repair_candidates": len(candidates),
-            "attempted_children": len(results),
+            "attempted_children": sum(not row.skipped for row in results),
+            "skipped_children": sum(row.skipped for row in results),
             "successful_children": sum(row.ok for row in results),
             "parent_build_ids": sorted({row.parent_build_id for row in results}),
+            "failure_classes": {
+                key: sum(row.failure_class == key for row in results)
+                for key in sorted({row.failure_class for row in results if row.failure_class})
+            },
         }, indent=2) + "\n")
         return results
