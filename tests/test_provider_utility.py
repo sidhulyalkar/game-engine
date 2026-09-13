@@ -11,6 +11,7 @@ def test_provider_utility_excludes_circuit_skips_from_network_attempts(tmp_path)
     path.write_text(json.dumps([
         {
             "provider": "nemotron",
+            "model": "nemotron-model",
             "role": "gameplay_director",
             "ok": True,
             "concept_ids": ["a", "b"],
@@ -21,6 +22,7 @@ def test_provider_utility_excludes_circuit_skips_from_network_attempts(tmp_path)
         },
         {
             "provider": "nemotron",
+            "model": "nemotron-model",
             "role": "gameplay_director",
             "ok": False,
             "concept_ids": [],
@@ -31,6 +33,7 @@ def test_provider_utility_excludes_circuit_skips_from_network_attempts(tmp_path)
         },
         {
             "provider": "nemotron",
+            "model": "nemotron-model",
             "role": "gameplay_director",
             "ok": False,
             "concept_ids": [],
@@ -57,6 +60,7 @@ def test_provider_utility_excludes_circuit_skips_from_network_attempts(tmp_path)
     assert row["mean_call_seconds"] == 21.0
     assert row["max_call_seconds"] == 30.0
     assert row["latency_observations"] == 2
+    assert ledger["models"]["nemotron-model"] == row
 
 
 def test_provider_utility_separates_role_specific_behavior_and_schema_failures(tmp_path):
@@ -64,6 +68,7 @@ def test_provider_utility_separates_role_specific_behavior_and_schema_failures(t
     path.write_text(json.dumps([
         {
             "provider": "kimi",
+            "model": "kimi-model",
             "role": "competition_judge",
             "ok": True,
             "concept_ids": ["x"],
@@ -74,6 +79,7 @@ def test_provider_utility_separates_role_specific_behavior_and_schema_failures(t
         },
         {
             "provider": "kimi",
+            "model": "kimi-model",
             "role": "desktop_specialist",
             "ok": False,
             "concept_ids": [],
@@ -87,14 +93,58 @@ def test_provider_utility_separates_role_specific_behavior_and_schema_failures(t
 
     ledger = build_provider_utility_ledger([path])
     rows = {(row["provider"], row["role"]): row for row in ledger["provider_roles"]}
+    model_rows = {(row["model"], row["role"]): row for row in ledger["model_roles"]}
     judge = rows[("kimi", "competition_judge")]
     desktop = rows[("kimi", "desktop_specialist")]
     assert judge["successful_assignments"] == 1
     assert judge["partially_rejected_concepts"] == 1
     assert desktop["content_or_schema_failures"] == 1
     assert desktop["operational_failures"] == 0
+    assert model_rows[("kimi-model", "competition_judge")]["successful_assignments"] == 1
+    assert model_rows[("kimi-model", "desktop_specialist")]["content_or_schema_failures"] == 1
+    assert ledger["schema_version"] == "0.2"
     assert ledger["policy"] == "measurement-only"
     assert ledger["routing_effect"] == "none"
+
+
+def test_model_identity_aggregates_stage_specific_provider_aliases(tmp_path):
+    primary = tmp_path / "primary.json"
+    rescue = tmp_path / "rescue.json"
+    primary.write_text(json.dumps([
+        {
+            "provider": "nvidia-kimi-k3",
+            "model": "moonshotai/kimi-k3",
+            "role": "visual_director",
+            "ok": False,
+            "concept_ids": [],
+            "warnings": [],
+            "skipped": False,
+            "failure_class": "transport",
+            "elapsed_seconds": 120.0,
+        }
+    ]))
+    rescue.write_text(json.dumps([
+        {
+            "provider": "nvidia-kimi-rescue",
+            "model": "moonshotai/kimi-k3",
+            "role": "competition_judge",
+            "ok": True,
+            "concept_ids": ["x"],
+            "warnings": [],
+            "skipped": False,
+            "failure_class": None,
+            "elapsed_seconds": 10.0,
+        }
+    ]))
+
+    ledger = build_provider_utility_ledger([primary, rescue])
+    assert set(ledger["providers"]) == {"nvidia-kimi-k3", "nvidia-kimi-rescue"}
+    model = ledger["models"]["moonshotai/kimi-k3"]
+    assert model["attempted_assignments"] == 2
+    assert model["successful_assignments"] == 1
+    assert model["operational_failures"] == 1
+    assert model["success_rate"] == 0.5
+    assert model["observed_call_seconds"] == 130.0
 
 
 def test_provider_utility_aggregates_multiple_swarm_stages_and_persists(tmp_path):
@@ -103,6 +153,7 @@ def test_provider_utility_aggregates_multiple_swarm_stages_and_persists(tmp_path
     primary.write_text(json.dumps([
         {
             "provider": "nemotron",
+            "model": "nemotron-model",
             "role": "wild_inventor",
             "ok": True,
             "concept_ids": ["a"],
@@ -114,7 +165,8 @@ def test_provider_utility_aggregates_multiple_swarm_stages_and_persists(tmp_path
     ]))
     rescue.write_text(json.dumps([
         {
-            "provider": "nemotron",
+            "provider": "nemotron-rescue",
+            "model": "nemotron-model",
             "role": "desktop_specialist",
             "ok": True,
             "concept_ids": ["b", "c"],
@@ -130,6 +182,6 @@ def test_provider_utility_aggregates_multiple_swarm_stages_and_persists(tmp_path
     persisted = json.loads(output.read_text())
     assert ledger == persisted
     assert persisted["observations"] == 2
-    assert persisted["providers"]["nemotron"]["accepted_concepts"] == 3
-    assert persisted["providers"]["nemotron"]["observed_call_seconds"] == 5.0
+    assert persisted["models"]["nemotron-model"]["accepted_concepts"] == 3
+    assert persisted["models"]["nemotron-model"]["observed_call_seconds"] == 5.0
     assert persisted["sources"] == [str(primary), str(rescue)]
