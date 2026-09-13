@@ -40,11 +40,22 @@ def _http_error_detail(exc: urllib.error.HTTPError, limit: int = 4096) -> str:
     return text
 
 
+def _runtime_error(message: str, started: float, attempt_count: int) -> RuntimeError:
+    exc = RuntimeError(message)
+    # These attributes are observational metadata consumed by the shadow economics
+    # layer. Existing callers still see an ordinary RuntimeError and unchanged text.
+    exc.elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)  # type: ignore[attr-defined]
+    exc.attempt_count = max(1, int(attempt_count))  # type: ignore[attr-defined]
+    return exc
+
+
 @dataclass(slots=True)
 class CompletionResult:
     content: str
     finish_reason: str | None
     usage: dict[str, Any] | None
+    elapsed_ms: float | None = None
+    attempt_count: int = 1
 
 
 class OpenAICompatibleClient:
@@ -110,19 +121,21 @@ class OpenAICompatibleClient:
 
     def complete_with_metadata(self, system: str, prompt: str) -> CompletionResult:
         request = self._request(system, prompt)
+        started = time.perf_counter()
         last_error: Exception | None = None
         for attempt in range(self.retries + 1):
+            attempt_count = attempt + 1
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     data = json.loads(response.read())
                 choices = data.get("choices") or []
                 if not choices:
-                    raise RuntimeError("Provider returned no choices")
+                    raise _runtime_error("Provider returned no choices", started, attempt_count)
                 choice = choices[0] or {}
                 message = choice.get("message") or {}
                 content = message.get("content")
                 if not isinstance(content, str) or not content.strip():
-                    raise RuntimeError("Provider returned empty message content")
+                    raise _runtime_error("Provider returned empty message content", started, attempt_count)
                 finish_reason = choice.get("finish_reason")
                 if finish_reason is not None:
                     finish_reason = str(finish_reason)
@@ -131,6 +144,8 @@ class OpenAICompatibleClient:
                     content=content,
                     finish_reason=finish_reason,
                     usage=usage if isinstance(usage, dict) else None,
+                    elapsed_ms=round((time.perf_counter() - started) * 1000.0, 3),
+                    attempt_count=attempt_count,
                 )
             except urllib.error.HTTPError as exc:
                 last_error = exc
@@ -138,15 +153,26 @@ class OpenAICompatibleClient:
                 if not retryable or attempt >= self.retries:
                     detail = _http_error_detail(exc)
                     suffix = f": {detail}" if detail else ""
-                    raise RuntimeError(f"Provider HTTP {exc.code} for model {self.model}{suffix}") from exc
+                    raise _runtime_error(
+                        f"Provider HTTP {exc.code} for model {self.model}{suffix}",
+                        started,
+                        attempt_count,
+                    ) from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 last_error = exc
                 if attempt >= self.retries:
-                    raise RuntimeError(f"Provider transport failure for model {self.model}: {type(exc).__name__}") from exc
+                    raise _runtime_error(
+                        f"Provider transport failure for model {self.model}: {type(exc).__name__}",
+                        started,
+                        attempt_count,
+                    ) from exc
             if attempt < self.retries and last_error is not None:
                 time.sleep(_retry_delay(last_error, attempt))
 
-        raise RuntimeError(f"Provider failed after retries: {type(last_error).__name__}")
+        attempts = self.retries + 1
+        raise _runtime_error(
+            f"Provider failed after retries: {type(last_error).__name__}", started, attempts
+        )
 
     def complete(self, system: str, prompt: str) -> str:
         return self.complete_with_metadata(system, prompt).content
