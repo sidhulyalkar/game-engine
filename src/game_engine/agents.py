@@ -8,6 +8,7 @@ class AgentRole:
     name: str
     mission: str
     veto: str | None = None
+    mode: str = "invent"
 
 
 STUDIO_ROLES = [
@@ -18,7 +19,11 @@ STUDIO_ROLES = [
     AgentRole("audio_director", "Make procedural audio reinforce timing, danger, success, and world identity."),
     AgentRole("onboarding_critic", "Assume a player gives the game ten seconds. Remove confusion before adding features.", "Reject unexplained control/state changes."),
     AgentRole("adversarial_designer", "Try to break dominant strategies, pacing, fairness, bosses, and scoring exploits."),
-    AgentRole("competition_judge", "Score innovation, theme, gameplay, graphics, audio, controls, category fit, and memorability."),
+    AgentRole(
+        "competition_judge",
+        "Score innovation, theme, gameplay, graphics, audio, controls, category fit, and memorability.",
+        mode="review",
+    ),
     AgentRole("integrator", "Synthesize disagreements into the smallest coherent game, preserving the strongest interaction."),
 ]
 
