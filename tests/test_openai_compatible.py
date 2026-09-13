@@ -74,7 +74,11 @@ def test_completion_metadata_preserves_finish_reason_usage_and_observation(monke
     result = client().complete_with_metadata("system", "prompt")
     assert result.content == "<!doctype html><html>"
     assert result.finish_reason == "length"
-    assert result.usage == {"prompt_tokens": 10, "completion_tokens": 20}
+    assert result.usage["prompt_tokens"] == 10
+    assert result.usage["completion_tokens"] == 20
+    assert result.usage["_game_engine"]["attempt_count"] == 1
+    assert result.usage["_game_engine"]["retry_count"] == 0
+    assert result.usage["_game_engine"]["elapsed_ms"] >= 0
     assert result.attempt_count == 1
     assert result.elapsed_ms is not None and result.elapsed_ms >= 0
 
@@ -115,4 +119,7 @@ def test_retry_observation_counts_actual_attempts(monkeypatch):
     result = client(retries=1).complete_with_metadata("system", "prompt")
     assert calls == 2
     assert result.attempt_count == 2
+    assert result.usage["total_tokens"] == 7
+    assert result.usage["_game_engine"]["attempt_count"] == 2
+    assert result.usage["_game_engine"]["retry_count"] == 1
     assert result.elapsed_ms is not None and result.elapsed_ms >= 0
