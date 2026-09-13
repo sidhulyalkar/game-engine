@@ -59,13 +59,59 @@ def _summary(rows: list[dict]) -> dict:
     }
 
 
-def build_provider_utility_ledger(contribution_paths: Iterable[Path]) -> dict:
-    """Aggregate empirical provider evidence without changing routing policy.
+def build_provider_utility_from_rows(rows: Iterable[dict], *, sources: Iterable[str] = ()) -> dict:
+    """Aggregate provider/model evidence without changing routing policy.
 
+    Provider aliases are stage-local, while model IDs are stable across primary,
+    rescue, build, and critic configurations. We therefore retain both views.
     Circuit-open rows are scheduled work but not network attempts. Reliability uses
     a Beta(1,1) posterior mean so tiny samples are not mistaken for certainty.
-    Latency is recorded separately rather than folded into an opaque scalar score.
     """
+    rows = [dict(row) for row in rows if isinstance(row, dict)]
+    by_provider: dict[str, list[dict]] = defaultdict(list)
+    by_provider_role: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    by_model: dict[str, list[dict]] = defaultdict(list)
+    by_model_role: dict[tuple[str, str], list[dict]] = defaultdict(list)
+
+    for row in rows:
+        provider = str(row.get("provider") or "unknown")
+        model = str(row.get("model") or f"unknown:{provider}")
+        role = str(row.get("role") or "unknown")
+        by_provider[provider].append(row)
+        by_provider_role[(provider, role)].append(row)
+        by_model[model].append(row)
+        by_model_role[(model, role)].append(row)
+
+    providers = {
+        provider: _summary(provider_rows)
+        for provider, provider_rows in sorted(by_provider.items())
+    }
+    provider_roles = [
+        {"provider": provider, "role": role, **_summary(role_rows)}
+        for (provider, role), role_rows in sorted(by_provider_role.items())
+    ]
+    models = {
+        model: _summary(model_rows)
+        for model, model_rows in sorted(by_model.items())
+    }
+    model_roles = [
+        {"model": model, "role": role, **_summary(role_rows)}
+        for (model, role), role_rows in sorted(by_model_role.items())
+    ]
+    return {
+        "schema_version": "0.2",
+        "policy": "measurement-only",
+        "routing_effect": "none",
+        "sources": list(sources),
+        "observations": len(rows),
+        "providers": providers,
+        "provider_roles": provider_roles,
+        "models": models,
+        "model_roles": model_roles,
+    }
+
+
+def build_provider_utility_ledger(contribution_paths: Iterable[Path]) -> dict:
     rows: list[dict] = []
     sources: list[str] = []
     for path in contribution_paths:
@@ -74,36 +120,7 @@ def build_provider_utility_ledger(contribution_paths: Iterable[Path]) -> dict:
         if loaded:
             sources.append(str(path))
             rows.extend(loaded)
-
-    by_provider: dict[str, list[dict]] = defaultdict(list)
-    by_provider_role: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    for row in rows:
-        provider = str(row.get("provider") or "unknown")
-        role = str(row.get("role") or "unknown")
-        by_provider[provider].append(row)
-        by_provider_role[(provider, role)].append(row)
-
-    providers = {
-        provider: _summary(provider_rows)
-        for provider, provider_rows in sorted(by_provider.items())
-    }
-    provider_roles = [
-        {
-            "provider": provider,
-            "role": role,
-            **_summary(role_rows),
-        }
-        for (provider, role), role_rows in sorted(by_provider_role.items())
-    ]
-    return {
-        "schema_version": "0.1",
-        "policy": "measurement-only",
-        "routing_effect": "none",
-        "sources": sources,
-        "observations": len(rows),
-        "providers": providers,
-        "provider_roles": provider_roles,
-    }
+    return build_provider_utility_from_rows(rows, sources=sources)
 
 
 def write_provider_utility_ledger(
