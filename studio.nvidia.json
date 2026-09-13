@@ -19,13 +19,13 @@
       "model": "deepseek-ai/deepseek-v4-pro-0813",
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
-      "roles": ["gameplay_director", "competition_judge", "online_specialist", "desktop_specialist"],
+      "roles": ["competition_judge"],
       "temperature": 0.8,
       "top_p": 0.95,
       "max_tokens": 4096,
       "timeout": 120,
       "retries": 0,
-      "max_concurrency": 2,
+      "max_concurrency": 1,
       "extra_body": {
         "chat_template_kwargs": {
           "thinking": false
