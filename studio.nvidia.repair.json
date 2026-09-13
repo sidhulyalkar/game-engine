@@ -19,11 +19,14 @@
       "base_url": "https://integrate.api.nvidia.com/v1",
       "api_key_env": "NVIDIA_API_KEY",
       "roles": [],
-      "temperature": 0.55,
-      "top_p": 0.9,
+      "temperature": 1.0,
+      "top_p": null,
       "max_tokens": 8192,
-      "timeout": 300,
+      "timeout": 240,
       "retries": 0,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
       "enabled": true
     }
   ]
